@@ -160,9 +160,16 @@ class _SuttaplexState extends State<Suttaplex> {
         _sutta?["translated_title"] ?? _sutta?["original_title"] ?? widget.uid;
     final blurb = _sutta?["blurb"] ?? "";
     final translations = _sutta?["filtered_translations"] ?? [];
-
     return Scaffold(
-      appBar: AppBar(title: Text(widget.uid.toUpperCase())),
+      appBar: AppBar(
+        title: Text(widget.uid.toUpperCase()),
+        leading: IconButton(
+          icon: const Icon(Icons.close), // atau Icons.arrow_back
+          onPressed: () {
+            Navigator.of(context).pop(); // nutup bottom sheet / page
+          },
+        ),
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _sutta == null
@@ -206,7 +213,32 @@ class _SuttaplexState extends State<Suttaplex> {
                     leading: const Icon(Icons.menu_book),
                     title: const Text("Bahasa Indonesia"),
                     subtitle: const Text(
-                      "Ashin Kheminda",
+                      "Belum ada terjemahan Indonesia",
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                    enabled: false,
+                  ),
+
+                  // 👉 Tambahan baru di bawah Tafsiran Ṭīkā
+                  const SizedBox(height: 24),
+                  const Text(
+                    "Tafsiran Ṭīkā:",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.menu_book),
+                    title: const Text("Bahasa Pāli"),
+                    subtitle: const Text(
+                      "Dhammapāla",
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                    enabled: false,
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.menu_book),
+                    title: const Text("Bahasa Indonesia"),
+                    subtitle: const Text(
+                      "Belum ada terjemahan Indonesia",
                       style: TextStyle(color: Colors.grey),
                     ),
                     enabled: false,

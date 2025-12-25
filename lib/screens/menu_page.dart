@@ -71,9 +71,22 @@ class _MenuPageState extends State<MenuPage> {
           );
         } else {
           // kalau leaf → buka Suttaplex (detail + pilihan bahasa)
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => Suttaplex(uid: item.uid)),
+          //Navigator.push(
+          //  context,
+          //  MaterialPageRoute(builder: (_) => Suttaplex(uid: item.uid)),
+          //);
+          // kalau leaf → buka Suttaplex sebagai bottom sheet
+          showModalBottomSheet(
+            context: context,
+            isScrollControlled: true, // biar bisa tinggi fleksibel
+            backgroundColor: Colors.white,
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            builder: (_) => FractionallySizedBox(
+              heightFactor: 0.85, // misalnya 85% tinggi layar, jadi ga full
+              child: Suttaplex(uid: item.uid),
+            ),
           );
         }
       },

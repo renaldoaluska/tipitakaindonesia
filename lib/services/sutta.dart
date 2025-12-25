@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 class SuttaService {
   static const String baseUrl = "https://suttacentral.net/api";
 
+  /// Ambil daftar menu untuk sebuah sutta
   static Future<dynamic> fetchMenu(String uid, {String language = "id"}) async {
     final url = Uri.parse("$baseUrl/menu/$uid?language=$language");
     final res = await http.get(url);
@@ -12,6 +13,7 @@ class SuttaService {
     throw Exception("Gagal memuat menu untuk $uid");
   }
 
+  /// Ambil metadata suttaplex (judul, info singkat, dll.)
   static Future<dynamic> fetchSuttaplex(
     String uid, {
     String language = "id",
@@ -44,15 +46,23 @@ class SuttaService {
 
     final raw = json.decode(res.body);
 
-    // ✅ Flatten segments agar mudah dipakai di model/UI
+    // ✅ Flatten agar mudah dipakai di model/UI
     if (raw is Map<String, dynamic>) {
-      if (raw.containsKey("translation") &&
+      if (raw.containsKey("translation_text")) {
+        // Bilara terjemahan (Sujato, dll.)
+        raw["segments"] = raw["translation_text"];
+      } else if (raw.containsKey("comment_text")) {
+        // Catatan modern Sujato (bukan Atthakathā/Tīkā klasik)
+        raw["segments"] = raw["comment_text"];
+      } else if (raw.containsKey("translation") &&
           raw["translation"] is Map &&
           raw["translation"].containsKey("segments")) {
+        // Legacy translation
         raw["segments"] = raw["translation"]["segments"];
       } else if (raw.containsKey("root_text") &&
           raw["root_text"] is Map &&
           raw["root_text"].containsKey("segments")) {
+        // Pāli root text
         raw["segments"] = raw["root_text"]["segments"];
       }
     }

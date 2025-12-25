@@ -12,21 +12,9 @@ class SegmentedSutta {
   factory SegmentedSutta.fromJson(Map<String, dynamic> json) {
     Map<String, String> segs = {};
 
-    // ✅ Case 1: segments di root
+    // ✅ Service sudah flatten ke "segments"
     if (json.containsKey("segments") && json["segments"] is Map) {
       segs = Map<String, String>.from(json["segments"]);
-    }
-    // ✅ Case 2: segments nested di translation
-    else if (json.containsKey("translation") &&
-        json["translation"] is Map &&
-        json["translation"].containsKey("segments")) {
-      segs = Map<String, String>.from(json["translation"]["segments"]);
-    }
-    // ✅ Case 3: segments nested di root_text
-    else if (json.containsKey("root_text") &&
-        json["root_text"] is Map &&
-        json["root_text"].containsKey("segments")) {
-      segs = Map<String, String>.from(json["root_text"]["segments"]);
     }
 
     return SegmentedSutta(
