@@ -1,66 +1,86 @@
-# Miscellaneous
+# ----------------------------------------------------------------------------
+# Miscellaneous / OS Files
+# ----------------------------------------------------------------------------
 *.class
 *.log
 *.pyc
 *.swp
 .DS_Store
+Thumbs.db
 .atom/
 .build/
 .buildlog/
 .history
 .svn/
 .swiftpm/
-migrate_working_dir/
 
-# IntelliJ related
+# ----------------------------------------------------------------------------
+# IDE Related (IntelliJ, Android Studio, VS Code)
+# ----------------------------------------------------------------------------
 *.iml
 *.ipr
 *.iws
 .idea/
-
-# VS Code related
 .vscode/
+.settings/
+.project
+.classpath
 
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
+# ----------------------------------------------------------------------------
+# Flutter & Dart Related
+# ----------------------------------------------------------------------------
 .dart_tool/
+.flutter-plugins
 .flutter-plugins-dependencies
+.packages
 .pub-cache/
 .pub/
-/build/
-/coverage/
+build/
+coverage/
+doc/api/
 
-# Symbolication related
-app.*.symbols
-
-# Obfuscation related
-app.*.map.json
-
-# Android Studio defaults
-**/android/app/debug
-**/android/app/profile
-**/android/app/release
-**/android/app/src/main/assets/
-
-# Android generated artifacts (PENTING)
+# ----------------------------------------------------------------------------
+# Android Generated Files
+# ----------------------------------------------------------------------------
 **/android/.gradle
 **/android/captures/
+**/android/gradle/
 **/android/gradlew
 **/android/gradlew.bat
+
+# PENTING: Jangan bocorin key alias dan config lokal laptop
 **/android/local.properties
 **/android/key.properties
+**/*.keystore
+**/*.jks
 
-# iOS generated
+# ----------------------------------------------------------------------------
+# iOS Generated Files
+# ----------------------------------------------------------------------------
+**/ios/Flutter/.last_build_id
 **/ios/Flutter/Generated.xcconfig
 **/ios/Flutter/app.flx
 **/ios/Flutter/app.zip
 **/ios/Flutter/flutter_assets/
 **/ios/ServiceDefinitions.json
 **/ios/Runner/GeneratedPluginRegistrant.*
+DerivedData/
 
-# Database & Large Files (PENTING BUAT PROJECT INI)
-*.db
-*.zip
+# ----------------------------------------------------------------------------
+# Database & Assets (SESUAI PROJECT LU)
+# ----------------------------------------------------------------------------
+# Kita JANGAN ignore folder assets secara keseluruhan
+# biar core.db tetep masuk ke GitHub
+!assets/database/core.db
+
+# Tapi kita ignore database hasil download/temp di laptop
 *.sqlite
 *.sql
+4nikaya.db
+
+# ----------------------------------------------------------------------------
+# Archive Files
+# ----------------------------------------------------------------------------
+*.zip
+*.tar.gz
+*.rar
