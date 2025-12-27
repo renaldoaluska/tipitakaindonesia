@@ -39,123 +39,129 @@ class _HomeState extends State<Home> with TickerProviderStateMixin {
       "range": "AN 1–11",
     },
     {
+      "acronym": "KN",
+      "name": "Khuddakanikāya",
+      "desc": "Kumpulan Kecil",
+      "range": "KN",
+    },
+  ];
+
+  final khuddakaChildren = [
+    {
       "acronym": "Kp",
-      "name": "Khuddakanikāya\nKhuddakapāṭha",
-      "desc": "Kumpulan Kecil\nPetikan Pendek",
+      "name": "Khuddakapāṭha",
+      "desc": "Petikan Pendek",
       "range": "Kp 1–9",
     },
     {
       "acronym": "Dhp",
-      "name": "Khuddakanikāya\nDhammapada",
-      "desc": "Kumpulan Kecil\nBait Kebenaran",
+      "name": "Dhammapada",
+      "desc": "Bait Kebenaran",
       "range": "Dhp 1–423",
     },
     {
       "acronym": "Ud",
-      "name": "Khuddakanikāya\nUdāna",
-      "desc": "Kumpulan Kecil\nSeruan Luhur",
+      "name": "Udāna",
+      "desc": "Seruan Luhur",
       "range": "Ud 1–8",
     },
     {
       "acronym": "Iti",
-      "name": "Khuddakanikāya\nItivuttaka",
-      "desc": "Kumpulan Kecil\nSedemikian Dikatakan",
+      "name": "Itivuttaka",
+      "desc": "Sedemikian Dikatakan",
       "range": "Iti 1–112",
     },
     {
       "acronym": "Snp",
-      "name": "Khuddakanikāya\nSuttanipāta",
-      "desc": "Kumpulan Kecil\nKoleksi Diskursus",
+      "name": "Suttanipāta",
+      "desc": "Himpunan Pembabaran",
       "range": "Snp 1–5",
     },
     {
       "acronym": "Vv",
-      "name": "Khuddakanikāya\nVimānavatthu",
-      "desc": "Kumpulan Kecil\nCerita Wisma",
+      "name": "Vimānavatthu",
+      "desc": "Cerita Wisma",
       "range": "Vv 1–85",
     },
     {
       "acronym": "Pv",
-      "name": "Khuddakanikāya\nPetavatthu",
-      "desc": "Kumpulan Kecil\nCerita Hantu",
+      "name": "Petavatthu",
+      "desc": "Cerita Hantu",
       "range": "Pv 1–51",
     },
     {
       "acronym": "Thag",
-      "name": "Khuddakanikāya\nTheragāthā",
-      "desc": "Kumpulan Kecil\nSyair Thera",
+      "name": "Theragāthā",
+      "desc": "Syair Thera",
       "range": "Thag 1–21",
     },
     {
       "acronym": "Thig",
-      "name": "Khuddakanikāya\nTherīgāthā",
-      "desc": "Kumpulan Kecil\nSyair Therī",
+      "name": "Therīgāthā",
+      "desc": "Syair Therī",
       "range": "Thig 1–16",
     },
     {
-      "acronym": "Tha-Ap",
-      "name": "Khuddakanikāya\nTherāpadāna",
-      "desc": "Kumpulan Kecil\nLegenda Thera",
-      "range": "Tha-Ap 1–563",
+      "acronym": "Tha Ap",
+      "name": "Therāpadāna",
+      "desc": "Legenda Thera",
+      "range": "Tha Ap 1–563",
+      "url": "tha-ap",
     },
     {
-      "acronym": "Thi-Ap",
-      "name": "Khuddakanikāya\nTherīapadāna",
-      "desc": "Kumpulan Kecil\nLegenda Therī",
-      "range": "Thi-Ap 1–40",
+      "acronym": "Thi Ap",
+      "name": "Therīapadāna",
+      "desc": "Legenda Therī",
+      "range": "Thi Ap 1–40",
+      "url": "thi-ap",
     },
     {
       "acronym": "Bv",
-      "name": "Khuddakanikāya\nBuddhavaṁsa",
-      "desc": "Kumpulan Kecil\nWangsa Buddha",
+      "name": "Buddhavaṁsa",
+      "desc": "Wangsa Buddha",
       "range": "Bv 1–29",
     },
     {
       "acronym": "Cp",
-      "name": "Khuddakanikāya\nCariyāpiṭaka",
-      "desc": "Kumpulan Kecil\nKeranjang Perilaku",
+      "name": "Cariyāpiṭaka",
+      "desc": "Keranjang Perilaku",
       "range": "Cp 1–35",
     },
     {
       "acronym": "Ja",
-      "name": "Khuddakanikāya\nJātaka",
-      "desc": "Kumpulan Kecil\nKisah Kelahiran",
+      "name": "Jātaka",
+      "desc": "Kisah Kelahiran",
       "range": "Ja 1–547",
     },
     {
       "acronym": "Mnd",
-      "name": "Khuddakanikāya\nMahāniddesa",
-      "desc": "Kumpulan Kecil\nEksposisi Besar",
+      "name": "Mahāniddesa",
+      "desc": "Eksposisi Besar",
       "range": "Mnd 1–16",
     },
     {
       "acronym": "Cnd",
-      "name": "Khuddakanikāya\nCūḷaniddesa",
-      "desc": "Kumpulan Kecil\nEksposisi Kecil",
+      "name": "Cūḷaniddesa",
+      "desc": "Eksposisi Kecil",
       "range": "Cnd 1–23",
     },
     {
       "acronym": "Ps",
-      "name": "Khuddakanikāya\nPaṭisambhidāmagga",
-      "desc": "Kumpulan Kecil\nJalan Analitis",
+      "name": "Paṭisambhidāmagga",
+      "desc": "Jalan Analitis",
       "range": "Ps 1–3",
     },
-    {
-      "acronym": "Ne",
-      "name": "Khuddakanikāya\nNetti",
-      "desc": "Kumpulan Kecil\nPanduan",
-      "range": "Ne 1–37",
-    },
+    {"acronym": "Ne", "name": "Netti", "desc": "Panduan", "range": "Ne 1–37"},
     {
       "acronym": "Pe",
-      "name": "Khuddakanikāya\nPeṭakopadesa",
-      "desc": "Kumpulan Kecil\nWilayah Keranjang",
+      "name": "Peṭakopadesa",
+      "desc": "Wilayah Keranjang",
       "range": "Pe 1–9",
     },
     {
       "acronym": "Mil",
-      "name": "Khuddakanikāya\nMilindapañha",
-      "desc": "Kumpulan Kecil\nPertanyaan Milinda",
+      "name": "Milindapañha",
+      "desc": "Pertanyaan Milinda",
       "range": "Mil 1–8",
     },
   ];
@@ -354,66 +360,251 @@ class _HomeState extends State<Home> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  Widget buildKitabList(List<Map<String, String>> kitabs) {
-    return ListView.builder(
-      padding: EdgeInsets.zero,
-      itemCount: kitabs.length,
-      itemBuilder: (context, index) {
-        final kitab = kitabs[index];
-        final uid = kitab["acronym"]!.toLowerCase();
-        final displayAcronym = normalizeNikayaAcronym(kitab["acronym"]!);
+  Widget buildTopIcon(String label, IconData icon, Color color) {
+    return Column(
+      children: [
+        CircleAvatar(
+          radius: 20,
+          backgroundColor: color,
+          child: Icon(icon, color: Colors.white, size: 20),
+        ),
+        const SizedBox(height: 4),
+        Text(label, style: const TextStyle(fontSize: 12)),
+      ],
+    );
+  }
 
-        return ListTile(
-          leading: buildNikayaAvatar(kitab["acronym"]!),
-          title: Text(
-            kitab["name"]!,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w500),
-          ),
-          subtitle: (kitab["desc"]?.isNotEmpty ?? false)
-              ? Text(
-                  kitab["desc"]!,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Colors.grey[600]),
-                )
-              : null,
-          trailing: Text(
-            kitab["range"]!,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: getNikayaColor(displayAcronym),
-            ),
-          ),
-          onTap: () {
-            // kalau ada field "url" (khusus Vinaya)
-            if (kitab.containsKey("url") &&
-                (kitab["url"]?.isNotEmpty ?? false)) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => MenuPage(
-                    uid: kitab["url"]!, // pakai url sebagai uid
-                    parentAcronym:
-                        displayAcronym, // tetap kirim acronym untuk style
+  Widget buildKitabList(List<Map<String, String>> kitabs) {
+    // Kalau ini list Sutta
+    final isSutta = identical(kitabs, suttaKitabs);
+
+    if (isSutta) {
+      // Set anak KN
+      const knChildrenSet = {
+        "Kp",
+        "Dhp",
+        "Ud",
+        "Iti",
+        "Snp",
+        "Vv",
+        "Pv",
+        "Thag",
+        "Thig",
+        "Tha Ap",
+        "Thi Ap",
+        "Bv",
+        "Cp",
+        "Ja",
+        "Mnd",
+        "Cnd",
+        "Ps",
+        "Ne",
+        "Pe",
+        "Mil",
+      };
+
+      final knChildren = suttaKitabs
+          .where((k) => knChildrenSet.contains(k["acronym"]))
+          .toList();
+      final parents = suttaKitabs
+          .where((k) => !knChildrenSet.contains(k["acronym"]))
+          .toList();
+
+      return Container(
+        color: Colors.grey[50], // 👉 background utama abu-abu muda
+        child: ListView(
+          padding: const EdgeInsets.all(8),
+          children: parents.map((kitab) {
+            final displayAcronym = normalizeNikayaAcronym(kitab["acronym"]!);
+
+            if (kitab["acronym"] == "KN") {
+              return Theme(
+                data: Theme.of(
+                  context,
+                ).copyWith(dividerColor: Colors.transparent),
+                child: Card(
+                  color: Colors.white, // 👉 kotak putih
+                  margin: const EdgeInsets.symmetric(vertical: 6),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  clipBehavior:
+                      Clip.antiAlias, // 👉 ripple & hover ke-clip radius
+                  child: ExpansionTile(
+                    leading: buildNikayaAvatar("KN"),
+                    title: Text(
+                      "Khuddakanikāya",
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      kitab["desc"]!,
+                      style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    initiallyExpanded: true,
+                    children: khuddakaChildren.map((child) {
+                      final childAcronym = normalizeNikayaAcronym(
+                        child["acronym"]!,
+                      );
+                      return ListTile(
+                        tileColor: Colors.white, // anak tetap putih
+                        hoverColor: Colors.grey[200], // efek hover
+                        leading: buildNikayaAvatar(childAcronym),
+                        title: Text(
+                          child["name"]!,
+                          style: const TextStyle(fontWeight: FontWeight.w500),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: (child["desc"]?.isNotEmpty ?? false)
+                            ? Text(
+                                child["desc"]!,
+                                style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontSize: 13,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              )
+                            : null,
+                        trailing: Text(
+                          child["range"]!,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: getNikayaColor(childAcronym),
+                          ),
+                        ),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => MenuPage(
+                                uid:
+                                    child["url"] ??
+                                    child["acronym"]!.toLowerCase(),
+                                parentAcronym: childAcronym,
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    }).toList(),
                   ),
                 ),
               );
-            } else {
-              // default: Sutta & Abhidhamma
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) =>
-                      MenuPage(uid: uid, parentAcronym: displayAcronym),
-                ),
-              );
             }
-          },
-        );
-      },
+
+            // Default DN/MN/SN/AN
+            return Card(
+              color: Colors.white, // 👉 kotak putih
+              margin: const EdgeInsets.symmetric(vertical: 6),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              clipBehavior: Clip.antiAlias, // 👉 ripple & hover ke-clip radius
+              child: ListTile(
+                leading: buildNikayaAvatar(displayAcronym),
+                title: Text(
+                  kitab["name"]!,
+                  style: const TextStyle(fontWeight: FontWeight.w500),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: (kitab["desc"]?.isNotEmpty ?? false)
+                    ? Text(
+                        kitab["desc"]!,
+                        style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      )
+                    : null,
+                trailing: Text(
+                  kitab["range"]!,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: getNikayaColor(displayAcronym),
+                  ),
+                ),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => MenuPage(
+                        uid: kitab["url"] ?? kitab["acronym"]!.toLowerCase(),
+                        parentAcronym: displayAcronym,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            );
+          }).toList(),
+        ),
+      );
+    }
+
+    // Default untuk Abhidhamma/Vinaya
+    return Container(
+      color: Colors.grey[50], // background utama abu-abu muda
+      child: ListView.builder(
+        padding: const EdgeInsets.all(8),
+        itemCount: kitabs.length,
+        itemBuilder: (context, index) {
+          final kitab = kitabs[index];
+          final displayAcronym = normalizeNikayaAcronym(kitab["acronym"]!);
+          final uid = kitab["acronym"]!.toLowerCase();
+
+          return Card(
+            color: Colors.white, // kotak putih
+            margin: const EdgeInsets.symmetric(vertical: 6),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            clipBehavior: Clip.antiAlias, // 👉 ripple & hover ke-clip radius
+            child: ListTile(
+              leading: buildNikayaAvatar(displayAcronym),
+              title: Text(
+                kitab["name"]!,
+                style: const TextStyle(fontWeight: FontWeight.w500),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: (kitab["desc"]?.isNotEmpty ?? false)
+                  ? Text(
+                      kitab["desc"]!,
+                      style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    )
+                  : null,
+              trailing: Text(
+                kitab["range"]!,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: getNikayaColor(displayAcronym),
+                ),
+              ),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => MenuPage(
+                      uid: kitab["url"] ?? uid,
+                      parentAcronym: displayAcronym,
+                    ),
+                  ),
+                );
+              },
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -461,20 +652,6 @@ class _HomeState extends State<Home> with TickerProviderStateMixin {
           ),
         ],
       ),
-    );
-  }
-
-  Widget buildTopIcon(String label, IconData icon, Color color) {
-    return Column(
-      children: [
-        CircleAvatar(
-          radius: 20,
-          backgroundColor: color,
-          child: Icon(icon, color: Colors.white, size: 20),
-        ),
-        const SizedBox(height: 4),
-        Text(label, style: const TextStyle(fontSize: 12)),
-      ],
     );
   }
 

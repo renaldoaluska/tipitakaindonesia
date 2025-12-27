@@ -57,81 +57,83 @@ class _MenuPageState extends State<MenuPage> {
 
   Widget buildMenuItem(MenuItem item) {
     final isLeaf = item.nodeType != "branch";
-    final displayAcronym = normalizeNikayaAcronym(_rootAcronym);
+    final displayAcronym = _rootAcronym;
 
-    return ListTile(
-      leading: buildNikayaAvatar(displayAcronym),
-      title: Text(
-        item.translatedTitle.isNotEmpty
-            ? item.translatedTitle
-            : item.originalTitle,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
-          fontWeight: FontWeight.w500, // agak tebal
-          fontSize: 16, // opsional, biar lebih jelas
+    // Cek apakah childRange udah include acronym
+    final childRangeHasAcronym = item.childRange.toUpperCase().contains(
+      displayAcronym.toUpperCase(),
+    );
+
+    return Card(
+      color: Colors.white,
+      margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      clipBehavior: Clip.antiAlias, // 👉 ripple & hover ke-clip radius
+      child: ListTile(
+        leading: buildNikayaAvatar(displayAcronym),
+        title: Text(
+          item.translatedTitle.isNotEmpty
+              ? item.translatedTitle
+              : item.originalTitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 16),
         ),
+        subtitle: item.blurb.isNotEmpty
+            ? Text(
+                item.blurb.replaceAll(RegExp(r'<[^>]*>'), ''),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: Colors.grey[600], fontSize: 13),
+              )
+            : null,
+        trailing: isLeaf
+            ? Text(
+                item.acronym.replaceFirst("Patthana", "Pat"),
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: getNikayaColor(displayAcronym),
+                ),
+              )
+            : (item.childRange.isNotEmpty
+                  ? Text(
+                      item.childRange, // langsung pake childRange aja, udah lengkap
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: getNikayaColor(displayAcronym),
+                      ),
+                    )
+                  : null),
+        onTap: () {
+          if (item.nodeType == "branch") {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                settings: RouteSettings(name: '/vagga/${item.uid}'),
+                builder: (_) => MenuPage(
+                  uid: item.uid,
+                  parentAcronym: normalizeNikayaAcronym(_rootAcronym),
+                ),
+              ),
+            );
+          } else {
+            showModalBottomSheet(
+              context: context,
+              isScrollControlled: true,
+              backgroundColor: Colors.white,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              builder: (_) => FractionallySizedBox(
+                heightFactor: 0.85,
+                child: Suttaplex(uid: item.uid),
+              ),
+            );
+          }
+        },
       ),
-      subtitle: item.blurb.isNotEmpty
-          ? Text(
-              // strip semua tag HTML biar aman
-              item.blurb.replaceAll(RegExp(r'<[^>]*>'), ''),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: Colors.grey[600], fontSize: 14),
-            )
-          : null,
-
-      trailing: isLeaf
-          ? Text(
-              // === CASE KHUSUS ===
-              // CASE KHUSUS: ganti "Patthana" jadi "Pat", tapi sisanya tetap
-              item.acronym.replaceFirst("Patthana", "Pat"),
-              // item.acronym.contains("Patthana") ? "Pat" : item.acronym,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: getNikayaColor(displayAcronym),
-              ),
-            )
-          : (item.childRange.isNotEmpty
-                ? Text(
-                    item.childRange,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: getNikayaColor(displayAcronym),
-                    ),
-                  )
-                : null),
-
-      onTap: () {
-        if (item.nodeType == "branch") {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => MenuPage(
-                uid: item.uid,
-                //parentAcronym: _rootAcronym, // teruskan acronym utama
-                parentAcronym: normalizeNikayaAcronym(_rootAcronym),
-              ),
-            ),
-          );
-        } else {
-          showModalBottomSheet(
-            context: context,
-            isScrollControlled: true,
-            backgroundColor: Colors.white,
-            shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-            ),
-            builder: (_) => FractionallySizedBox(
-              heightFactor: 0.85,
-              child: Suttaplex(uid: item.uid),
-            ),
-          );
-        }
-      },
     );
   }
 
@@ -140,96 +142,190 @@ class _MenuPageState extends State<MenuPage> {
     final rawBlurb = _root?["blurb"] ?? "";
     final previewBlurb = rawBlurb.replaceAll(RegExp(r'<[^>]*>'), '');
     final isLong = previewBlurb.length > 60;
+
+    // 👇 TAMBAHIN INI
+    print("========== HEADER DEBUG ==========");
+    print("widget.uid: ${widget.uid}");
+    print("widget.parentAcronym: ${widget.parentAcronym}");
+    print("_rootAcronym: '$_rootAcronym'");
+    print("root_name: '${_root?["root_name"]}'");
+    print("root acronym dari API: '${_root?["acronym"]}'");
+    print("child_range: '${_root?["child_range"]}'");
+    print("==================================");
+
     return Scaffold(
-      appBar: AppBar(title: Text(widget.uid)),
+      appBar: null,
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _items.isEmpty
           ? const Center(child: Text("Data tidak tersedia (menu_page)"))
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (_root != null)
-                  Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _root?["root_name"] ?? "",
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              isLong
-                                  ? previewBlurb.substring(0, 60) + "..."
-                                  : previewBlurb,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                color: Colors.black87,
-                              ),
-                            ),
-                            if (isLong)
-                              GestureDetector(
-                                onTap: () {
-                                  showDialog(
-                                    context: context,
-                                    builder: (_) => AlertDialog(
-                                      title: Text(_root?["root_name"] ?? ""),
-                                      content: SingleChildScrollView(
-                                        child: Html(
-                                          data: rawBlurb,
-                                          style: {
-                                            "body": Style(
-                                              fontSize: FontSize(14),
-                                              lineHeight: LineHeight(1.5),
-                                              margin: Margins.zero,
-                                              padding: HtmlPaddings.zero,
-                                              color: Colors.black87,
-                                            ),
-                                          },
-                                        ),
-                                      ),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.pop(context),
-                                          child: const Text("Tutup"),
+          : Container(
+              color: Colors.grey[50], // 👉 background abu-abu muda
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    height: MediaQuery.of(context).padding.top,
+                  ), // 👉 jarak aman
+                  if (_root != null)
+                    Card(
+                      color: Colors.white,
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 6,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // 👉 Row: tombol back + judul + acronym + range
+                              Row(
+                                children: [
+                                  // Tombol back bulat putih
+                                  Container(
+                                    decoration: const BoxDecoration(
+                                      color: Colors.white,
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black12,
+                                          blurRadius: 4,
+                                          offset: Offset(0, 2),
                                         ),
                                       ],
                                     ),
-                                  );
-                                },
-                                child: const Text(
-                                  "Selengkapnya",
-                                  style: TextStyle(
-                                    color: Colors.blue,
-                                    fontWeight: FontWeight.w500,
+                                    child: IconButton(
+                                      icon: const Icon(
+                                        Icons.arrow_back,
+                                        color: Colors.black,
+                                      ),
+                                      onPressed: () => Navigator.pop(context),
+                                    ),
                                   ),
+                                  const SizedBox(width: 8),
+
+                                  // Judul kitab utama
+                                  Expanded(
+                                    child: Text(
+                                      _root?["root_name"] ?? "",
+                                      style: const TextStyle(
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+
+                                  // Akronim: tampilkan HANYA kalau child_range kosong
+                                  if (_rootAcronym.isNotEmpty &&
+                                      _rootAcronym.trim().toUpperCase() !=
+                                          (_root?["root_name"] ?? "")
+                                              .trim()
+                                              .toUpperCase() &&
+                                      (_root?["child_range"] ?? "")
+                                          .isEmpty) // 👈 TAMBAHIN INI
+                                    Text(
+                                      _rootAcronym,
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                        color: getNikayaColor(
+                                          normalizeNikayaAcronym(_rootAcronym),
+                                        ),
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+
+                                  // Range anak kalau ada (udah include akronim di dalemnya)
+                                  if ((_root?["child_range"] ?? "").isNotEmpty)
+                                    Text(
+                                      _root?["child_range"] ?? "",
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                        color: getNikayaColor(_rootAcronym),
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+
+                              RichText(
+                                text: TextSpan(
+                                  style: TextStyle(
+                                    fontSize: 16, // 👈 ini yang bikin konsisten
+                                    color: Colors
+                                        .grey[700], // 👈 warna sama kayak sebelumnya
+                                  ),
+                                  children: [
+                                    TextSpan(
+                                      text: isLong
+                                          ? previewBlurb.substring(0, 60) +
+                                                "... "
+                                          : previewBlurb,
+                                    ),
+                                    if (isLong)
+                                      TextSpan(
+                                        text: "Baca selengkapnya",
+                                        style: const TextStyle(
+                                          fontSize:
+                                              16, // 👈 tambahin juga biar gak beda
+                                          color: Colors.blue,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                        recognizer: TapGestureRecognizer()
+                                          ..onTap = () {
+                                            showDialog(
+                                              context: context,
+                                              builder: (_) => AlertDialog(
+                                                title: Text(
+                                                  _root?["root_name"] ?? "",
+                                                ),
+                                                content: SingleChildScrollView(
+                                                  child: Html(data: rawBlurb),
+                                                ),
+                                                actions: [
+                                                  TextButton(
+                                                    onPressed: () =>
+                                                        Navigator.pop(context),
+                                                    child: const Text("Tutup"),
+                                                  ),
+                                                ],
+                                              ),
+                                            );
+                                          },
+                                      ),
+                                  ],
                                 ),
                               ),
-                            const Divider(height: 16),
-                          ],
+                            ],
+                          ),
                         ),
-                      ],
+                      ),
+                    ),
+                  Expanded(
+                    child: ListView.builder(
+                      padding: EdgeInsets.zero, // 👉 rapetin list ke header
+                      itemCount: _items.length,
+                      itemBuilder: (context, index) {
+                        final item = _items[index];
+                        return buildMenuItem(item);
+                      },
                     ),
                   ),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: _items.length,
-                    itemBuilder: (context, index) {
-                      final item = _items[index];
-                      return buildMenuItem(item);
-                    },
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
     );
   }

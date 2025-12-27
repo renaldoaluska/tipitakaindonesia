@@ -7,10 +7,32 @@ const Map<String, Color> nikayaColors = {
   "SN": Color(0xFF388E3C), // hijau
   "AN": Color(0xFF1976D2), // biru
   "KN": Color(0xFF7B1FA2), // ungu
+
+  "Kp": Color(0xFF7B1FA2), // ungu
+  "Dhp": Color(0xFF7B1FA2), // ungu
+  "Ud": Color(0xFF7B1FA2), // ungu
+  "Iti": Color(0xFF7B1FA2), // ungu
+  "Snp": Color(0xFF7B1FA2), // ungu
+  "Vv": Color(0xFF7B1FA2), // ungu
+  "Pv": Color(0xFF7B1FA2), // ungu
+  "Thag": Color(0xFF7B1FA2), // ungu
+  "Thig": Color(0xFF7B1FA2), // ungu
+
+  "Tha Ap": Color(0xFF7B1FA2), // ungu
+  "Thi Ap": Color(0xFF7B1FA2), // ungu
+  "Bv": Color(0xFF7B1FA2), // ungu
+  "Cp": Color(0xFF7B1FA2), // ungu
+  "Ja": Color(0xFF7B1FA2), // ungu
+  "Mnd": Color(0xFF7B1FA2), // ungu
+  "Cnd": Color(0xFF7B1FA2), // ungu
+  "Ps": Color(0xFF7B1FA2), // ungu
+  "Ne": Color(0xFF7B1FA2), // ungu
+  "Pe": Color(0xFF7B1FA2), // ungu
+  "Mil": Color(0xFF7B1FA2), // ungu
 };
 
 /// Daftar kitab yang termasuk Khuddaka Nikāya
-const Set<String> khuddakaSet = {
+/*const Set<String> khuddakaSet = {
   "Kp",
   "Dhp",
   "Ud",
@@ -20,8 +42,8 @@ const Set<String> khuddakaSet = {
   "Pv",
   "Thag",
   "Thig",
-  "Tha-Ap",
-  "Thi-Ap",
+  "Tha-ap",
+  "Thi-ap",
   "Bv",
   "Cp",
   "Ja",
@@ -31,11 +53,30 @@ const Set<String> khuddakaSet = {
   "Ne",
   "Pe",
   "Mil",
-};
+};*/
 
-/// Normalisasi acronym: semua Khuddaka ditampilkan sebagai KN
 String normalizeNikayaAcronym(String acronym) {
-  return khuddakaSet.contains(acronym) ? "KN" : acronym;
+  // Ubah strip jadi spasi biar konsisten
+  String normalized = acronym.replaceAll("-", " ");
+
+  // Set khusus yang harus tetap full uppercase
+  const fullUpperSet = {"DN", "MN", "SN", "AN", "KN"};
+
+  if (fullUpperSet.contains(normalized.toUpperCase())) {
+    return normalized.toUpperCase();
+  }
+
+  // Kalau lebih dari satu kata, kapitalisasi tiap kata
+  normalized = normalized
+      .split(" ")
+      .map(
+        (word) => word.isNotEmpty
+            ? word[0].toUpperCase() + word.substring(1).toLowerCase()
+            : "",
+      )
+      .join(" ");
+
+  return normalized;
 }
 
 /// Ambil warna sesuai Nikāya (fallback ke grey kalau tidak ada)

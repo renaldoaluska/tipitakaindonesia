@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_html/flutter_html.dart';
 import 'package:html_unescape/html_unescape.dart';
+import 'package:tipitaka/screens/menu_page.dart';
+import 'package:tipitaka/screens/suttaplex.dart';
+import 'package:tipitaka/services/sutta.dart';
 import '../models/sutta_text.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
-import 'dart:async'; // Jangan lupa import ini
+import 'dart:async';
 
 enum ViewMode { translationOnly, lineByLine, sideBySide }
 
@@ -12,11 +15,16 @@ class SuttaDetail extends StatefulWidget {
   final String lang;
   final Map<String, dynamic>? textData;
 
+  final bool openedFromSuttaDetail;
+  final String? originalSuttaUid;
+
   const SuttaDetail({
     super.key,
     required this.uid,
     required this.lang,
     required this.textData,
+    this.openedFromSuttaDetail = false, // ✅ Default false
+    this.originalSuttaUid, // ✅ Nullable
   });
 
   @override
@@ -24,6 +32,15 @@ class SuttaDetail extends StatefulWidget {
 }
 
 class _SuttaDetailState extends State<SuttaDetail> {
+  // --- NAV CONTEXT & STATE ---
+  String? _parentVaggaId; // anchor back ke Vagga/Nikaya aktif
+
+  // Tambahin variable di class state (bagian atas)
+  bool _hasNavigated = false; // ✅ Track apakah user pernah next/prev
+  bool _isFirst = false; // disable Prev jika true
+  bool _isLast = false; // disable Next jika true
+  bool _isLoading = false;
+
   bool _isHtmlParsed = false;
   RegExp? _cachedSearchRegex;
   String _lastSearchQuery = "";
@@ -74,26 +91,42 @@ class _SuttaDetailState extends State<SuttaDetail> {
   void initState() {
     super.initState();
 
+    print("=== WIDGET INFO ===");
+    print("uid: ${widget.uid}");
+    print("lang: ${widget.lang}");
+    print("segmented: ${widget.textData?["segmented"]}");
+    print("keys_order: ${widget.textData?["keys_order"]?.runtimeType}");
+
+    // ✅ CEK SEGMENTED DULU
+    final bool isSegmented = widget.textData?["segmented"] == true;
+
     // Generate TOC buat segmented
-    if (widget.textData != null && widget.textData!["keys_order"] is List) {
+    if (isSegmented &&
+        widget.textData != null &&
+        widget.textData!["keys_order"] is List) {
       _generateTOC();
     }
 
-    // Step 3: TAMBAHKAN INI - Parse HTML di initState, bukan di build
+    // Parse HTML untuk non-segmented
     _parseHtmlIfNeeded();
+    _initNavigationContext();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ScaffoldMessenger.of(context).clearMaterialBanners();
+    });
   }
 
   // 3. Logic Cari Heading (H1, H2, H3) buat Daftar Isi
-  // 3. Logic Cari Heading (H1, H2, H3) buat Daftar Isi
   void _generateTOC() {
+    // ✅ CEK DULU ADA keys_order GA
+    if (widget.textData!["keys_order"] == null) return;
+
     final keysOrder = List<String>.from(widget.textData!["keys_order"]);
 
-    // 1. Ambil Map Terjemahan
     final transSegs = (widget.textData!["translation_text"] is Map)
         ? (widget.textData!["translation_text"] as Map)
         : {};
 
-    // 2. Ambil Map Root (Pali) -> INI YANG BARU
     final rootSegs = (widget.textData!["root_text"] is Map)
         ? (widget.textData!["root_text"] as Map)
         : {};
@@ -102,37 +135,24 @@ class _SuttaDetailState extends State<SuttaDetail> {
 
     for (int i = 0; i < keysOrder.length; i++) {
       final key = keysOrder[i];
-      // Logic ambil nomor verse
       final verseNumRaw = key.contains(":") ? key.split(":").last : key;
       final verseNum = verseNumRaw.trim();
 
-      // --- DETEKSI HEADER ---
-      bool isH1 = verseNum == "0.1"; // Judul Utama
-      bool isH2 = verseNum == "0.2"; // Sub Judul
-
-      // Regex cocokkan semua "0.x" atau persis "0"
-      final headerRegex = RegExp(r"^0(\.\d+)?$");
+      bool isH1 = verseNum == "0.1";
+      bool isH2 = verseNum == "0.2";
+      final headerRegex = RegExp(r'^(?:\d+\.)*0(?:\.\d+)*$');
       final isHeader = headerRegex.hasMatch(verseNum);
-
-      // Sisanya dianggap H3
       bool isH3 = isHeader && !isH1 && !isH2;
 
       if (isH1 || isH2 || isH3) {
-        // 3. LOGIC CARI JUDUL (FIX)
-
-        // Coba ambil dari terjemahan dulu
         String title =
             transSegs[key]?.toString() ?? rootSegs[key]?.toString() ?? "";
-
-        // Bersihkan tag HTML
         title = title.replaceAll(RegExp(r'<[^>]*>'), '').trim();
 
-        // Fallback kalau kosong
         if (title.isEmpty) {
           title = "Bagian $verseNum";
         }
 
-        // Simpen ke list
         _tocList.add({
           "title": title,
           "index": i,
@@ -141,127 +161,92 @@ class _SuttaDetailState extends State<SuttaDetail> {
       }
     }
   }
-  // --- SELESAI SISIPAN ---
 
-  // LOGIC SEARCH (VERSI CHROME: DETIL PER KATA)
   void _performSearch(String query) {
     _allMatches.clear();
     _currentMatchIndex = 0;
 
     if (query.trim().isEmpty || query.trim().length < 2) {
-      _cachedSearchRegex = null; // Step 3: Clear cache
+      _cachedSearchRegex = null;
       _lastSearchQuery = "";
       setState(() {});
       return;
     }
 
     final lowerQuery = query.toLowerCase();
-
-    // Step 4: TAMBAHKAN INI - Cache regex
     _lastSearchQuery = lowerQuery;
     _cachedSearchRegex = RegExp(
       RegExp.escape(lowerQuery),
       caseSensitive: false,
     );
 
-    // --- SETUP DATA (Sama kayak sebelumnya) ---
-    final segmented = SegmentedSutta.fromJson(widget.textData!);
-    final translationSegs = (widget.textData!["translation_text"] is Map)
-        ? (widget.textData!["translation_text"] as Map)
-        : segmented.segments;
-    final keysOrder = widget.textData!["keys_order"] is List
-        ? List<String>.from(widget.textData!["keys_order"])
-        : translationSegs.keys.toList();
+    // ✅ DETEKSI MODE DARI FLAG
+    final bool isSegmented = widget.textData!["segmented"] == true;
 
-    final hasTranslationMap =
-        widget.textData!["translation_text"] is Map &&
-        (widget.textData!["translation_text"] as Map).isNotEmpty;
+    if (isSegmented) {
+      // ✅ AMBIL DATA LANGSUNG DARI textData
+      final translationSegs = (widget.textData!["translation_text"] is Map)
+          ? (widget.textData!["translation_text"] as Map)
+          : {};
 
-    final hasRootMap =
-        widget.textData!["root_text"] is Map &&
-        (widget.textData!["root_text"] as Map).isNotEmpty;
-
-    // flag tambahan untuk kasus pure Pali
-    final isPurePali = hasRootMap && !hasTranslationMap;
-    // definisikan rootSegs di sini
-    final rootSegs = (widget.textData!["root_text"] is Map)
-        ? (widget.textData!["root_text"] as Map)
-        : {};
-
-    final isSegmentedView = hasTranslationMap && keysOrder.isNotEmpty;
-
-    // --- KASUS A: SEGMENTED (View Biasa) ---
-    if (isSegmentedView) {
       final rootSegs = (widget.textData!["root_text"] is Map)
           ? (widget.textData!["root_text"] as Map)
           : {};
 
-      for (int i = 0; i < keysOrder.length; i++) {
-        final key = keysOrder[i];
+      // ✅ AMBIL keysOrder DARI FLAG
+      final keysOrder = widget.textData!["keys_order"] is List
+          ? List<String>.from(widget.textData!["keys_order"])
+          : [];
 
-        // 1. Cek Root Text (Pali)
-        // Kita hitung dulu ada berapa match di sini, tapi kita gak butuh teksnya buat highlighting nanti
-        // Kuncinya: Kita cuma butuh tau "Baris i punya match".
-        // Tapi tunggu, highlight TextSpan butuh logic khusus.
-        // Biar simpel: Kita simpan Match berdasarkan index baris.
-        // Nanti _highlightText yang nentuin mana yg aktif.
+      // Filter metadata keys
+      final metadataKeys = {
+        'previous',
+        'next',
+        'author_uid',
+        'vagga_uid',
+        'lang',
+        'title',
+        'acronym',
+        'text',
+      };
 
-        // Gabungkan teks Pali + Terjemahan dalam pikiran (atau cek satu2)
-        // Disini kita harus hati-hati. _highlightText dipanggil TERPISAH untuk Pali dan Trans.
-        // Jadi logic "Next" harus tau urutannya: Pali dulu, baru Trans? Atau gimana?
-        // KITA SIMPLIFIKASI: Kita anggap satu baris = satu kesatuan pencarian dulu biar ga pusing.
-        // TAPI user minta per KATA. Oke.
+      final filteredKeys = keysOrder
+          .where((k) => !metadataKeys.contains(k))
+          .toList();
 
-        // Strategi: Kita kumpulkan match Pali dulu, baru match Trans.
+      // Scan setiap baris
+      for (int i = 0; i < filteredKeys.length; i++) {
+        final key = filteredKeys[i];
+
+        // 1. Match di Root (Pali)
         final rootText = (rootSegs[key] ?? "").toString();
         final rootMatches = _cachedSearchRegex!
             .allMatches(rootText.toLowerCase())
             .length;
 
         for (int m = 0; m < rootMatches; m++) {
-          // Tandai: Baris ke-i, Tipe 0 (Pali), Urutan m
-          // *Hack Dikit*: Kita pake matchIndexInSeg buat nyimpen urutan global di baris itu
-          // Biar gampang, kita pake logic simple:
-          // Kita simpan (Baris i, Match ke-n di baris itu).
           _allMatches.add(SearchMatch(i, m));
         }
 
+        // 2. Match di Translation
         final transText = (translationSegs[key] ?? "").toString();
         final transMatches = _cachedSearchRegex!
             .allMatches(transText.toLowerCase())
             .length;
 
         for (int m = 0; m < transMatches; m++) {
-          // Lanjutin urutannya. Kalau pali ada 2, trans match pertama jadi urutan ke-2.
           _allMatches.add(SearchMatch(i, rootMatches + m));
         }
       }
     }
-    // --- KASUS B: HTML / HTML SEGMENTS ---
+    // HTML mode
     else if (_htmlSegments.isNotEmpty) {
-      // SIAPIN LIST KOSONG sesuai jumlah potongan html
-      //_htmlMatchCounts = List.filled(_htmlSegments.length, 0);
-
       for (int i = 0; i < _htmlSegments.length; i++) {
         final cleanText = _htmlSegments[i].replaceAll(RegExp(r'<[^>]*>'), '');
         final matches = _cachedSearchRegex!
             .allMatches(cleanText.toLowerCase())
             .length;
 
-        // SIMPEN JUMLAHNYA DI SINI (biar itemBuilder ga usah ngitung ulang)
-        //_htmlMatchCounts[i] = matches;
-
-        for (int m = 0; m < matches; m++) {
-          _allMatches.add(SearchMatch(i, m));
-        }
-      }
-    } else if (isPurePali) {
-      for (int i = 0; i < keysOrder.length; i++) {
-        final key = keysOrder[i];
-        final rootText = (rootSegs[key] ?? "").toString();
-        final matches = _cachedSearchRegex!
-            .allMatches(rootText.toLowerCase())
-            .length;
         for (int m = 0; m < matches; m++) {
           _allMatches.add(SearchMatch(i, m));
         }
@@ -500,6 +485,687 @@ class _SuttaDetailState extends State<SuttaDetail> {
     }
   }
 
+  void _initNavigationContext() {
+    print("=== INIT NAVIGATION ===");
+    print("root_text: ${widget.textData?["root_text"]}");
+    print("vagga_uid: ${widget.textData?["root_text"]?["vagga_uid"]}");
+    print("resolved_vagga_uid: ${widget.textData?["resolved_vagga_uid"]}");
+    print("previous: ${widget.textData?["root_text"]?["previous"]}");
+    print("next: ${widget.textData?["root_text"]?["next"]}");
+
+    final root = widget.textData?["root_text"];
+    if (root is Map) {
+      _parentVaggaId =
+          root["vagga_uid"]?.toString() ??
+          widget.textData?["resolved_vagga_uid"]?.toString();
+
+      final prev = root["previous"];
+      final next = root["next"];
+
+      // ✅ Cek: null, Map kosong, uid null, ATAU uid string kosong
+      _isFirst =
+          prev == null ||
+          (prev is Map &&
+              (prev.isEmpty ||
+                  prev["uid"] == null ||
+                  prev["uid"].toString().trim().isEmpty));
+      _isLast =
+          next == null ||
+          (next is Map &&
+              (next.isEmpty ||
+                  next["uid"] == null ||
+                  next["uid"].toString().trim().isEmpty));
+
+      print("_isFirst: $_isFirst, _isLast: $_isLast");
+    } else {
+      _isFirst = true;
+      _isLast = true;
+    }
+
+    setState(() {});
+  }
+
+  Future<bool> _handleBackReplace() async {
+    // 🛑 SATPAM: Cek dulu ini Sutta hasil Next/Prev atau bukan?
+    // Kalau ini hasil Next/Prev (openedFromSuttaDetail == true),
+    // biarkan dia BACK NORMAL (mundur history) tanpa dialog.
+    if (widget.openedFromSuttaDetail) {
+      return true; // true = izinkan Navigator.pop jalan
+    }
+
+    print("=== BACK HANDLER (ROOT SUTTA) ===");
+    print("Mencari induk untuk kembali...");
+
+    // 1. Kalau ini Sutta PERTAMA (openedFromSuttaDetail == false),
+    // Kita cari induknya buat siap-siap "Exit to Menu"
+    if (_parentVaggaId == null) {
+      final resolved = await _resolveVaggaUid(widget.uid);
+      if (mounted && resolved != null) {
+        setState(() {
+          _parentVaggaId = resolved;
+        });
+      }
+    }
+
+    // 2. Kalau Induk ketemu, TAMPILKAN DIALOG "TINGGALKAN MODE BACA?"
+    if (_parentVaggaId != null) {
+      final shouldLeave = await showDialog<bool>(
+        context: context,
+        barrierDismissible: true,
+        builder: (ctx) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.logout_rounded, color: Theme.of(context).primaryColor),
+              const SizedBox(width: 12),
+              const Flexible(
+                child: Text(
+                  "Tinggalkan mode baca?",
+                  style: TextStyle(fontSize: 18),
+                ),
+              ),
+            ],
+          ),
+          content: const Text(
+            "Posisi bacaan akan kembali ke daftar awal.",
+            style: TextStyle(color: Colors.grey),
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          actions: [
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(ctx, false), // JANGAN KELUAR
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    child: const Text("Batal"),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () => Navigator.pop(ctx, true), // YAKIN KELUAR
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    child: const Text("Ya, Keluar"),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+
+      if (shouldLeave != true) return false; // Batal back
+      if (!mounted) return false;
+      // ✅ OPTIMASI BARU:
+      // Kalau user GAK pernah Next/Prev (stack masih murni),
+      // Cukup pop biasa aja. Ini lebih mulus & posisi scroll menu terjaga.
+      // if (!_hasNavigated) {
+      //  Navigator.pop(context, true);
+      //  return false;
+      // }
+
+      // --- EKSEKUSI KELUAR KE MENU (Hanya kalau Stack sudah "kotor" karena Next/Prev) ---
+
+      // OPTIONAL: Bersihkan cache SuttaService biar RAM lega lagi setelah sesi baca selesai
+      // (Api cache tetep jalan, jadi kalau user masuk lagi tetep cepet, cuma perlu parsing ulang dikit)
+      SuttaService.clearCache();
+      print("Cleared SuttaService memory cache.");
+      // Bersihkan tumpukan Sutta, sisakan root
+      Navigator.of(context).popUntil((route) => route.isFirst);
+
+      // (Opsional) Push Root Prefix (misal DN/MN) kalau perlu biar breadcrumb rapi
+      final rootPrefix =
+          RegExp(r'^[A-Za-z]+(?:-[A-Za-z]+)?').stringMatch(widget.uid) ?? "";
+      if (rootPrefix.isNotEmpty) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            settings: RouteSettings(name: '/$rootPrefix'),
+            builder: (_) => MenuPage(uid: rootPrefix),
+          ),
+        );
+      }
+
+      // Format Acronym buat judul header menu
+      String rawAcronym =
+          widget.textData?["root_text"]?["acronym"]?.toString() ?? "";
+      if (rawAcronym.isEmpty) {
+        rawAcronym =
+            RegExp(r'^[A-Za-z]+(?:-[A-Za-z]+)?').stringMatch(widget.uid) ?? "";
+      }
+      rawAcronym = rawAcronym.replaceAll("-", " ");
+      const fullUpperSet = {"DN", "MN", "SN", "AN"};
+      String formattedAcronym = fullUpperSet.contains(rawAcronym.toUpperCase())
+          ? rawAcronym.toUpperCase()
+          : rawAcronym.isNotEmpty
+          ? rawAcronym[0].toUpperCase() + rawAcronym.substring(1)
+          : "";
+
+      // Push ke Halaman Menu (Vagga)
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          settings: RouteSettings(name: '/vagga/$_parentVaggaId'),
+          builder: (_) =>
+              MenuPage(uid: _parentVaggaId!, parentAcronym: formattedAcronym),
+        ),
+      );
+
+      return false; // Kita handle navigasi sendiri, jadi return false
+    }
+
+    // 3. Fallback kalau gak punya parent (misal teks lepas/error), back normal aja
+    print("No dialog, back normal");
+    Navigator.pop(context);
+    return true;
+  }
+
+  void _replaceToRoute(String route, {bool slideFromLeft = false}) {
+    Widget targetPage;
+
+    if (route.startsWith('/vagga/')) {
+      final vaggaId = route.split('/').last;
+      targetPage = MenuPage(uid: vaggaId);
+    } else if (route.startsWith('/suttaplex/')) {
+      final suttaId = route.split('/').last;
+      targetPage = Suttaplex(uid: suttaId);
+    } else {
+      targetPage = const Scaffold(
+        body: Center(child: Text("Route belum dihubungkan")),
+      );
+    }
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => targetPage),
+    );
+  }
+
+  Future<void> _replaceToSutta(
+    String newUid,
+    String lang, {
+    required String authorUid,
+    required bool segmented,
+    Map<String, dynamic>? textData,
+    bool slideFromLeft = false,
+  }) async {
+    setState(() => _isLoading = true);
+
+    try {
+      // Kalau data sudah ada (dari Suttaplex modal), langsung pakai
+      final data =
+          textData ??
+          await SuttaService.fetchFullSutta(
+            uid: newUid,
+            authorUid: authorUid,
+            lang: lang,
+            segmented: segmented,
+            siteLanguage: "id",
+          );
+
+      print("=== _replaceToSutta DEBUG ===");
+      print("Source: ${textData != null ? '🔵 Suttaplex' : '🟢 API'}");
+      print("UID: $newUid | Lang: $lang | Segmented: $segmented");
+      print("Data keys: ${data.keys}");
+
+      if (data["root_text"] is Map) {
+        final rootMap = data["root_text"] as Map;
+        print("root_text: ${rootMap.keys.length} keys");
+        // Sample beberapa key
+        final sampleKeys = rootMap.keys.take(5).toList();
+        print("  sample keys: $sampleKeys");
+      }
+
+      if (data["translation_text"] is Map) {
+        final transMap = data["translation_text"] as Map;
+        print("translation_text: ${transMap.keys.length} keys");
+        final sampleKeys = transMap.keys.take(5).toList();
+        print("  sample keys: $sampleKeys");
+      }
+
+      print("keys_order: ${data["keys_order"]}");
+      print("=============================\n");
+
+      // ✅ SIMPLE MERGE - Service sudah handle semua normalisasi
+      final mergedData = {...data, "suttaplex": widget.textData?["suttaplex"]};
+
+      // Update navigation state
+      _updateParentAnchorOnMove(
+        mergedData["root_text"] as Map<String, dynamic>?,
+        mergedData["suttaplex"] as Map<String, dynamic>?,
+      );
+
+      // Resolve vagga
+      final root = mergedData["root_text"];
+      if (root is Map && root["vagga_uid"] != null) {
+        setState(() => _parentVaggaId = root["vagga_uid"].toString());
+      } else {
+        final resolvedVagga = await _resolveVaggaUid(newUid);
+        if (resolvedVagga != null) {
+          setState(() => _parentVaggaId = resolvedVagga);
+          mergedData["resolved_vagga_uid"] = resolvedVagga;
+        }
+      }
+
+      if (!mounted) return;
+
+      // Navigate
+      Navigator.pushReplacement(
+        context,
+        PageRouteBuilder(
+          settings: RouteSettings(name: '/sutta/$newUid'),
+          pageBuilder: (_, __, ___) => SuttaDetail(
+            uid: newUid,
+            lang: lang,
+            textData: mergedData,
+            openedFromSuttaDetail: true,
+            originalSuttaUid: null,
+          ),
+          transitionsBuilder: (_, animation, __, child) {
+            final offsetBegin = slideFromLeft
+                ? const Offset(-1, 0)
+                : const Offset(1, 0);
+            final tween = Tween(
+              begin: offsetBegin,
+              end: Offset.zero,
+            ).chain(CurveTween(curve: Curves.easeInOut));
+            return SlideTransition(
+              position: animation.drive(tween),
+              child: child,
+            );
+          },
+        ),
+      );
+    } catch (e, stackTrace) {
+      debugPrint("❌ Error _replaceToSutta: $e");
+      debugPrint("Stack: $stackTrace");
+
+      if (!mounted) return;
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          settings: RouteSettings(name: '/suttaplex/$newUid'),
+          builder: (_) => Suttaplex(uid: newUid),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // TODO: ganti ke sumber data kamu
+  Future<_Avail> _checkAvailability(Map<String, dynamic>? nav) async {
+    if (nav == null) return const _Avail("pli", false);
+    final lang = nav["lang"]?.toString() ?? "pli";
+    final hasTranslation = (lang == "id" || lang == "en");
+    return _Avail(lang, hasTranslation);
+  }
+
+  /// Helper untuk resolve vagga_uid dari sutta uid
+  /// Contoh: mn61 -> cari di menu/mn, ketemu di range MN 51-100 -> return "mn-majjhimapannasa"
+  /// Helper untuk resolve vagga_uid dari sutta uid
+  /// FIXED: Sekarang support format 3 angka (misal: SN 3.11-20 -> [3, 11, 20])
+  // ✅ LOGIC PENCARI ORANG TUA KANDUNG (DRILL DOWN - FINAL)
+  // Menangani struktur dalam kayak SN & AN (Collection -> Book -> Vagga -> Sutta)
+  Future<String?> _resolveVaggaUid(String suttaUid) async {
+    try {
+      print("=== 🕵️ START DRILL DOWN: $suttaUid ===");
+
+      // 1. Parsing UID (sn12.10 -> coll: sn, book: 12, sutta: 10)
+      final regex = RegExp(r'^([a-z]+)(\d+)(?:\.(\d+))?');
+      final match = regex.firstMatch(suttaUid.toLowerCase());
+
+      if (match == null) return null;
+
+      final collection = match.group(1)!; // sn
+      final bookNum = int.parse(match.group(2)!); // 12
+      final suttaNum = match.group(3) != null
+          ? int.parse(match.group(3)!)
+          : null; // 10
+
+      print("🎯 Target: $collection Book:$bookNum Sutta:$suttaNum");
+
+      // Mulai dari Root Koleksi
+      String currentParent = collection;
+
+      // Loop maksimal 5 level (SN -> SN 12-21 -> SN 12 -> SN 12.1-10)
+      for (int level = 0; level < 5; level++) {
+        // print("🔍 Level $level Checking: $currentParent");
+
+        final menuData = await SuttaService.fetchMenu(
+          currentParent,
+          language: "id",
+        );
+        if (menuData is! List || menuData.isEmpty) break;
+
+        final root = menuData[0];
+        final children = root["children"] as List?;
+        if (children == null || children.isEmpty) break;
+
+        String? nextParent;
+
+        // Scan anak-anak di level ini
+        for (var child in children) {
+          final rangeStr = child["child_range"]?.toString() ?? "";
+          if (rangeStr.isEmpty) continue;
+
+          // Parsing Angka dari Range
+          // Contoh "SN 1–11" -> [1, 11]
+          // Contoh "SN 12" -> [12]
+          // Contoh "SN 12.1-10" -> [12, 1, 10] (Book, Start, End)
+          final nums = RegExp(
+            r'(\d+)',
+          ).allMatches(rangeStr).map((m) => int.parse(m.group(1)!)).toList();
+          if (nums.isEmpty) continue;
+
+          // LOGIC PENCOCOKAN YANG LEBIH PINTAR
+          bool isMatch = false;
+
+          // 1. Cek Level Buku Range (SN 1-11)
+          if (level == 0 && (collection == 'sn' || collection == 'an')) {
+            int start = nums.first;
+            int end = nums.last;
+            if (bookNum >= start && bookNum <= end) isMatch = true;
+          }
+          // 2. Cek Level Buku Tunggal (SN 12)
+          // Range biasanya cuma 1 angka = NOMOR BUKU
+          else if (nums.length == 1 && nums.first == bookNum) {
+            // Pastikan UID child mengandung bookNum kita (biar gak salah tangkap angka lain)
+            if (child['uid'].toString().contains(bookNum.toString()))
+              isMatch = true;
+          }
+          // 3. Cek Level Sutta Range (SN 12.1-10) -> [12, 1, 10]
+          // Ini logic khusus buat SN/AN yang punya range sutta di dalam buku
+          else if (suttaNum != null && nums.length >= 3) {
+            // Pastikan Buku-nya cocok dulu (Angka Pertama)
+            if (nums[0] == bookNum) {
+              int start =
+                  nums[nums.length -
+                      2]; // Angka ke-2 dari belakang (Start Sutta)
+              int end = nums.last; // Angka terakhir (End Sutta)
+
+              if (suttaNum >= start && suttaNum <= end) {
+                isMatch = true;
+              }
+            }
+          }
+          // 4. Cek Level Sutta Range tanpa Buku (1-10) -> [1, 10]
+          // Kadang range-nya ga bawa nomor buku kalau parent-nya udah jelas buku
+          else if (suttaNum != null && nums.length == 2) {
+            // Cek apakah currentParent adalah Buku yang benar (misal sn12)
+            if (currentParent.contains(bookNum.toString())) {
+              int start = nums[0];
+              int end = nums[1];
+              if (suttaNum >= start && suttaNum <= end) isMatch = true;
+            }
+          }
+
+          if (isMatch) {
+            nextParent = child["uid"];
+            // print("   ✅ Match found: $nextParent (Range: $rangeStr)");
+            break;
+          }
+        }
+
+        if (nextParent != null) {
+          currentParent = nextParent;
+        } else {
+          // Kalau gak ada anak yang lebih dalam, STOP. Kita udah di ujung.
+          // print("🛑 No deeper match found. Stop at $currentParent");
+          break;
+        }
+      }
+
+      print("🏁 Final Resolved Vagga: $currentParent");
+      // Safety: Jangan balikin collection root ('sn') sebagai parent vagga
+      if (currentParent == collection) return null;
+
+      return currentParent;
+    } catch (e) {
+      debugPrint("Error resolving vagga: $e");
+      return null;
+    }
+  }
+
+  // ✅ LOGIC NAVIGASI UTAMA (GABUNGAN PREV & NEXT)
+  Future<void> _navigateToSutta({required bool isPrevious}) async {
+    final segmented = widget.textData?["segmented"] == true;
+
+    // 1. Tentukan Key ("previous" atau "next")
+    final key = isPrevious ? "previous" : "next";
+
+    // 2. Cari Target Data (Sama persis logic lu)
+    Map<String, dynamic>? navTarget;
+    if (segmented) {
+      final root = widget.textData?["root_text"];
+      navTarget = (root is Map) ? root[key] : null;
+    } else {
+      final trans = widget.textData?["translation"];
+      final root = widget.textData?["root_text"];
+      final suttaplex = widget.textData?["suttaplex"];
+
+      if (trans is Map && trans[key] != null) {
+        navTarget = trans[key];
+      } else if (root is Map && root[key] != null) {
+        navTarget = root[key];
+      } else if (suttaplex is Map) {
+        navTarget = suttaplex[key];
+      }
+    }
+
+    // 3. Validasi UID
+    if (navTarget == null || navTarget["uid"] == null) return;
+    final targetUid = navTarget["uid"].toString();
+    if (targetUid.trim().isEmpty) return;
+
+    // 4. Ambil Author UID (Fitur Fallback Lu Dijaga Disini)
+    String? authorUid = widget.textData?["author_uid"]?.toString();
+
+    if (authorUid == null) {
+      if (segmented) {
+        authorUid =
+            widget.textData?["translation"]?["author_uid"]?.toString() ??
+            widget.textData?["comment_text"]?["author_uid"]?.toString();
+      } else {
+        authorUid =
+            navTarget["author_uid"]?.toString() ??
+            widget.textData?["translation"]?["author_uid"]?.toString();
+      }
+    }
+
+    if (authorUid == null) {
+      debugPrint("ERROR: authorUid is null for $targetUid");
+      return;
+    }
+
+    // 5. Tentukan Bahasa
+    final targetLang = segmented
+        ? widget.lang
+        : navTarget["lang"]?.toString() ?? widget.lang;
+
+    setState(() {
+      _isLoading = true;
+      _hasNavigated = true;
+    });
+
+    try {
+      final data = await SuttaService.fetchFullSutta(
+        uid: targetUid,
+        authorUid: authorUid,
+        lang: targetLang,
+        segmented: segmented,
+        siteLanguage: "id",
+      );
+
+      // Merge Data
+      final mergedData = {
+        ...data,
+        "segmented": segmented,
+        "suttaplex": widget.textData?["suttaplex"],
+      };
+
+      // Update Anchor
+      _updateParentAnchorOnMove(
+        mergedData["root_text"] as Map<String, dynamic>?,
+        mergedData["suttaplex"] as Map<String, dynamic>?,
+      );
+
+      // 6. Resolve Vagga (Fitur Penting Lu)
+      final rootMeta = mergedData["root_text"];
+      if (rootMeta is Map &&
+          rootMeta["vagga_uid"] != null &&
+          rootMeta["vagga_uid"].toString().trim().isNotEmpty) {
+        setState(() => _parentVaggaId = rootMeta["vagga_uid"].toString());
+      } else {
+        final resolvedVagga = await _resolveVaggaUid(targetUid);
+        if (resolvedVagga != null) {
+          setState(() => _parentVaggaId = resolvedVagga);
+          mergedData["resolved_vagga_uid"] =
+              resolvedVagga; // Disimpan biar persist
+        }
+      }
+
+      if (!mounted) return;
+
+      // 7. Navigasi dengan Animasi Arah yang Benar
+      Navigator.pushReplacement(
+        context,
+        PageRouteBuilder(
+          settings: RouteSettings(name: '/sutta/$targetUid'),
+          pageBuilder: (_, __, ___) => SuttaDetail(
+            uid: targetUid,
+            lang: targetLang,
+            textData: mergedData,
+            openedFromSuttaDetail: true,
+            originalSuttaUid: null,
+          ),
+          transitionsBuilder: (_, animation, __, child) {
+            // Kalau Prev: Slide dari Kiri (-1), Kalau Next: Slide dari Kanan (1)
+            final offsetBegin = isPrevious
+                ? const Offset(-1, 0)
+                : const Offset(1, 0);
+            final tween = Tween(
+              begin: offsetBegin,
+              end: Offset.zero,
+            ).chain(CurveTween(curve: Curves.easeInOut));
+            return SlideTransition(
+              position: animation.drive(tween),
+              child: child,
+            );
+          },
+        ),
+      );
+
+      if (targetLang == "en") _showEnFallbackBanner();
+    } catch (e) {
+      // Fallback ke Suttaplex kalau gagal
+      _replaceToRoute(
+        '/suttaplex/$targetUid',
+        slideFromLeft: isPrevious, // Animasi fallback juga ngikutin arah
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // ✅ Trigger Singkat (Tinggal panggil ini di tombol)
+  void _goToPrevSutta() => _navigateToSutta(isPrevious: true);
+  void _goToNextSutta() => _navigateToSutta(isPrevious: false);
+
+  void _updateParentAnchorOnMove(
+    Map<String, dynamic>? root,
+    Map<String, dynamic>? suttaplex,
+  ) {
+    final prev = root?["previous"] ?? suttaplex?["previous"];
+    final next = root?["next"] ?? suttaplex?["next"];
+
+    // ✅ CEK LENGKAP: null, Map kosong, uid null, ATAU uid string kosong
+    _isFirst =
+        prev == null ||
+        (prev is Map &&
+            (prev.isEmpty ||
+                prev["uid"] == null ||
+                prev["uid"].toString().trim().isEmpty));
+    _isLast =
+        next == null ||
+        (next is Map &&
+            (next.isEmpty ||
+                next["uid"] == null ||
+                next["uid"].toString().trim().isEmpty));
+
+    setState(() {});
+  }
+
+  void _showEnFallbackBanner() {
+    // MaterialBanner agar persisten
+    ScaffoldMessenger.of(context).clearMaterialBanners();
+    ScaffoldMessenger.of(context).showMaterialBanner(
+      MaterialBanner(
+        content: const Text(
+          "Bahasa Indonesia tidak tersedia, menampilkan versi Inggris.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () =>
+                ScaffoldMessenger.of(context).clearMaterialBanners(),
+            child: const Text("Tutup"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant SuttaDetail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // Kalau textData berubah, parse ulang
+    if (widget.textData != oldWidget.textData) {
+      setState(() {
+        _htmlSegments.clear();
+        _tocList.clear();
+
+        // segmented
+        final hasTranslationMap =
+            widget.textData?["translation_text"] is Map &&
+            (widget.textData!["translation_text"] as Map).isNotEmpty;
+        final keysOrder = widget.textData?["keys_order"] is List
+            ? List<String>.from(widget.textData!["keys_order"])
+            : (widget.textData?["segments"] as Map?)?.keys.toList() ?? [];
+
+        final isSegmented = hasTranslationMap && keysOrder.isNotEmpty;
+
+        if (!isSegmented) {
+          // non‑segmented → parse HTML langsung
+          String rawHtml = "";
+          if (widget.textData?["translation_text"] is Map &&
+              widget.textData!["translation_text"].containsKey("text")) {
+            final transMap = Map<String, dynamic>.from(
+              widget.textData!["translation_text"],
+            );
+            final sutta = NonSegmentedSutta.fromJson(transMap);
+            rawHtml = HtmlUnescape().convert(sutta.text);
+          } else if (widget.textData?["root_text"] is Map &&
+              widget.textData!["root_text"].containsKey("text")) {
+            final rootMap = Map<String, dynamic>.from(
+              widget.textData!["root_text"],
+            );
+            final sutta = NonSegmentedSutta.fromJson(rootMap);
+            rawHtml = HtmlUnescape().convert(sutta.text);
+          }
+
+          if (rawHtml.isNotEmpty) {
+            _parseHtmlAndGenerateTOC(rawHtml);
+          }
+        }
+        // kalau segmented, builder di build() udah handle sendiri
+      });
+    }
+  }
+
   // Taruh ini di atas @override Widget build(BuildContext context)
 
   WidgetSpan _buildCommentSpan(
@@ -566,1329 +1232,1028 @@ class _SuttaDetailState extends State<SuttaDetail> {
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (widget.textData == null || widget.textData!.isEmpty) {
-      return Scaffold(
-        key: _scaffoldKey, // <---KEY
-        appBar: AppBar(title: Text("${widget.uid} [${widget.lang}]")),
-        body: const Center(child: Text("Teks tidak tersedia")),
+  // METHOD DI DALAM _SuttaDetailState
+  SuttaHeaderConfig _getHeaderConfig(String key, {bool isPaliOnly = false}) {
+    // 1. Bersihkan Verse Num
+    final verseNumRaw = key.contains(":") ? key.split(":").last : key;
+    final verseNum = verseNumRaw.trim();
+
+    // 2. Deteksi Header
+    final isH1 = verseNum == "0.1";
+    final isH2 = verseNum == "0.2";
+    final headerRegex = RegExp(r'^(?:\d+\.)*0(?:\.\d+)*$');
+    final isHeader = headerRegex.hasMatch(verseNum);
+    final isH3 = isHeader && !isH1 && !isH2;
+
+    // 3. Tentukan Warna Pali (Sesuai Tema)
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final paliBodyColor = isDark ? Colors.amber[200]! : Colors.deepOrange[900]!;
+    final paliColor = isPaliOnly ? Colors.black : paliBodyColor;
+
+    // 4. Setup Style & Padding
+    TextStyle paliStyle, transStyle;
+    double topPadding, bottomPadding;
+
+    if (isH1) {
+      topPadding = 16.0; // Diskon dari 40
+      bottomPadding = 16.0;
+      paliStyle = TextStyle(
+        fontSize: _fontSize * 1.6,
+        fontWeight: FontWeight.w900,
+        color: Colors.black,
+        height: 1.2,
+        letterSpacing: -0.5,
+      );
+      transStyle = paliStyle; // H1 Trans sama style-nya
+    } else if (isH2) {
+      topPadding = 8.0;
+      bottomPadding = 12.0;
+      paliStyle = TextStyle(
+        fontSize: _fontSize * 1.4,
+        fontWeight: FontWeight.bold,
+        color: Colors.black87,
+        height: 1.3,
+      );
+      transStyle = paliStyle;
+    } else if (isH3) {
+      topPadding = 16.0;
+      bottomPadding = 8.0;
+      paliStyle = TextStyle(
+        fontSize: _fontSize * 1.2,
+        fontWeight: FontWeight.w700,
+        color: Colors.black87,
+        height: 1.4,
+      );
+      transStyle = paliStyle;
+    } else {
+      topPadding = 0.0;
+      bottomPadding = 8.0; // Default spacing antar ayat
+      paliStyle = TextStyle(
+        fontSize: _fontSize * 0.9,
+        fontWeight: FontWeight.w500,
+        color: paliColor, // <-- Pake warna dynamic tadi
+        height: 1.5,
+      );
+      transStyle = TextStyle(
+        fontSize: _fontSize,
+        fontWeight: FontWeight.normal,
+        color: Colors.black,
+        height: 1.5,
       );
     }
 
-    final segmented = SegmentedSutta.fromJson(widget.textData!);
+    return SuttaHeaderConfig(
+      isH1: isH1,
+      isH2: isH2,
+      isH3: isH3,
+      verseNum: verseNum,
+      paliStyle: paliStyle,
+      transStyle: transStyle,
+      topPadding: topPadding,
+      bottomPadding: bottomPadding,
+    );
+  }
 
-    final paliSegs = (widget.textData!["root_text"] is Map)
-        ? (widget.textData!["root_text"] as Map).map(
-            (key, value) => MapEntry(key.toString(), value.toString()),
-          )
-        : <String, String>{};
+  // Method Utama untuk ngerender 1 Item Segmented
+  Widget _buildSegmentedItem(
+    BuildContext context,
+    int index,
+    String key,
+    Map<String, String> paliSegs,
+    Map<String, String> translationSegs,
+    Map<String, String> commentarySegs,
+  ) {
+    // 1. Ambil Config Header (Pake fungsi step 1)
+    final config = _getHeaderConfig(key);
 
-    final translationSegs = (widget.textData!["translation_text"] is Map)
-        ? (widget.textData!["translation_text"] as Map).map(
-            (key, value) => MapEntry(key.toString(), value.toString()),
-          )
-        : segmented.segments;
+    // 2. Ambil Content
+    var pali = paliSegs[key] ?? "";
+    if (pali.trim().isEmpty) pali = "... pe ...";
 
-    final commentarySegs = (widget.textData!["comment_text"] is Map)
-        ? (widget.textData!["comment_text"] as Map).map(
-            (key, value) => MapEntry(key.toString(), value.toString()),
-          )
-        : <String, String>{};
+    var trans = translationSegs[key] ?? "";
+    final isTransEmpty = trans.trim().isEmpty;
+    final comm = commentarySegs[key] ?? "";
 
-    final keysOrder = widget.textData!["keys_order"] is List
-        ? List<String>.from(widget.textData!["keys_order"])
-        : translationSegs.keys.toList();
+    // 3. Logic Search Match Count (Global offset buat highlighting)
+    final query = _searchController.text.trim();
+    final int paliMatchCount = (query.length >= 2 && _cachedSearchRegex != null)
+        ? _cachedSearchRegex!.allMatches(pali.toLowerCase()).length
+        : 0;
 
-    final hasTranslationMap =
-        widget.textData!["translation_text"] is Map &&
-        (widget.textData!["translation_text"] as Map).isNotEmpty;
-    final isSegmented = hasTranslationMap && keysOrder.isNotEmpty;
+    // 4. Return Widget Berdasarkan ViewMode
+    // Kita passing data yg udah "mateng" ke sub-widget
+    switch (_viewMode) {
+      case ViewMode.translationOnly:
+        return _buildLayoutTransOnly(config, index, trans, isTransEmpty, comm);
+      case ViewMode.lineByLine:
+        return _buildLayoutLineByLine(
+          config,
+          index,
+          pali,
+          trans,
+          isTransEmpty,
+          comm,
+          paliMatchCount,
+        );
+      case ViewMode.sideBySide:
+        return _buildLayoutSideBySide(
+          config,
+          index,
+          pali,
+          trans,
+          isTransEmpty,
+          comm,
+          paliMatchCount,
+        );
+    }
+  }
 
-    Widget body = const SizedBox.shrink();
+  // Layout 1: Translation Only
+  Widget _buildLayoutTransOnly(
+    SuttaHeaderConfig config,
+    int index,
+    String trans,
+    bool isTransEmpty,
+    String comm,
+  ) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: 8, top: config.topPadding),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildVerseNumber(config),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    children: _highlightText(
+                      isTransEmpty ? "... [pe] ..." : trans,
+                      isTransEmpty
+                          ? config.transStyle.copyWith(
+                              color: Colors.grey,
+                              fontStyle: FontStyle.italic,
+                            )
+                          : config.transStyle,
+                      index,
+                      0, // Start match index 0 karena gak ada Pali sebelumnya
+                    ),
+                  ),
+                  if (comm.isNotEmpty)
+                    _buildCommentSpan(
+                      context,
+                      comm,
+                      config.transStyle.fontSize ?? _fontSize,
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Layout 2: Line by Line (Atas Bawah)
+  Widget _buildLayoutLineByLine(
+    SuttaHeaderConfig config,
+    int index,
+    String pali,
+    String trans,
+    bool isTransEmpty,
+    String comm,
+    int paliMatchCount,
+  ) {
+    // Logic style khusus utk "... pe ..." (Pali ellipsis)
+    final isPe =
+        pali == "... pe ..." && !config.isH1 && !config.isH2 && !config.isH3;
+    final finalPaliStyle = config.paliStyle.copyWith(
+      fontStyle: isPe ? FontStyle.italic : FontStyle.normal,
+      color: isPe ? Colors.grey : config.paliStyle.color,
+    );
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: 12, top: config.topPadding),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildVerseNumber(config),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Baris Pali
+                Text.rich(
+                  TextSpan(
+                    children: _highlightText(pali, finalPaliStyle, index, 0),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                // Baris Trans
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(
+                        children: _highlightText(
+                          isTransEmpty ? "... [dst] ..." : trans,
+                          isTransEmpty
+                              ? config.transStyle.copyWith(
+                                  color: Colors.grey,
+                                  fontStyle: FontStyle.italic,
+                                )
+                              : config.transStyle,
+                          index,
+                          paliMatchCount, // Offset match count setelah Pali
+                        ),
+                      ),
+                      if (comm.isNotEmpty)
+                        _buildCommentSpan(
+                          context,
+                          comm,
+                          config.transStyle.fontSize ?? _fontSize,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Layout 3: Side by Side (Kiri Kanan)
+  Widget _buildLayoutSideBySide(
+    SuttaHeaderConfig config,
+    int index,
+    String pali,
+    String trans,
+    bool isTransEmpty,
+    String comm,
+    int paliMatchCount,
+  ) {
+    final isPe =
+        pali == "... pe ..." && !config.isH1 && !config.isH2 && !config.isH3;
+    final finalPaliStyle = config.paliStyle.copyWith(
+      fontStyle: isPe ? FontStyle.italic : FontStyle.normal,
+      color: isPe ? Colors.grey : config.paliStyle.color,
+    );
+
+    // Kalau Header (H1/H2/H3), layoutnya balik ke Atas-Bawah biar ga aneh
+    if (config.isH1 || config.isH2 || config.isH3) {
+      // Reuse layout line-by-line khusus buat header
+      return _buildLayoutLineByLine(
+        config,
+        index,
+        pali,
+        trans,
+        isTransEmpty,
+        comm,
+        paliMatchCount,
+      );
+    }
+
+    return Column(
+      children: [
+        Padding(
+          padding: EdgeInsets.only(top: config.topPadding),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // KIRI: Pali + No Ayat
+              Expanded(
+                flex: 1,
+                child: Text.rich(
+                  TextSpan(
+                    style: const TextStyle(color: Colors.black),
+                    children: [
+                      // No Ayat Superscript Manual
+                      WidgetSpan(
+                        child: Transform.translate(
+                          offset: const Offset(0, -6),
+                          child: SelectionContainer.disabled(
+                            child: Text(
+                              config.verseNum,
+                              textScaleFactor: 0.7,
+                              style: const TextStyle(color: Colors.grey),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const TextSpan(text: " "),
+                      ..._highlightText(pali, finalPaliStyle, index, 0),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // KANAN: Trans + Comm
+              Expanded(
+                flex: 2,
+                child: Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(
+                        children: _highlightText(
+                          isTransEmpty ? "... [pe] ..." : trans,
+                          isTransEmpty
+                              ? config.transStyle.copyWith(
+                                  color: Colors.grey,
+                                  fontStyle: FontStyle.italic,
+                                )
+                              : config.transStyle,
+                          index,
+                          paliMatchCount,
+                        ),
+                      ),
+                      if (comm.isNotEmpty)
+                        _buildCommentSpan(
+                          context,
+                          comm,
+                          config.transStyle.fontSize ?? _fontSize,
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+      ],
+    );
+  }
+
+  // Widget kecil buat Nomor Ayat biar konsisten
+  Widget _buildVerseNumber(SuttaHeaderConfig config) {
+    return SelectionContainer.disabled(
+      child: Padding(
+        padding: EdgeInsets.only(top: config.isH1 || config.isH2 ? 6.0 : 0.0),
+        child: Text(
+          config.verseNum,
+          style: const TextStyle(fontSize: 12, color: Colors.grey, height: 1.5),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 1. CEK DATA KOSONG
+    if (widget.textData == null || widget.textData!.isEmpty) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) async {
+          if (didPop) return;
+          final allow = await _handleBackReplace();
+          if (allow) Navigator.pop(context, result);
+        },
+        child: Scaffold(
+          key: _scaffoldKey,
+          appBar: AppBar(title: Text("${widget.uid} [${widget.lang}]")),
+          body: const Center(child: Text("Teks tidak tersedia")),
+        ),
+      );
+    }
+
+    final bool isSegmented = widget.textData!["segmented"] == true;
+
+    // 2. PERSIAPAN DATA (Map & Keys)
+    final Map<String, String> paliSegs;
+    final Map<String, String> translationSegs;
+    final Map<String, String> commentarySegs;
+    final List<String> keysOrder;
 
     if (isSegmented) {
-      switch (_viewMode) {
-        case ViewMode.translationOnly:
-          body = SelectionArea(
-            child: ScrollablePositionedList.builder(
-              // TAMBAH 2 BARIS INI:
-              itemScrollController: _itemScrollController,
-              itemPositionsListener: _itemPositionsListener,
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
-              itemCount: keysOrder.length,
-              itemBuilder: (context, index) {
-                final key = keysOrder[index];
-                final trans = translationSegs[key] ?? "";
-                final comm = commentarySegs[key] ?? "";
+      // ... Logic parsing data Segmented lu yang lama ...
+      paliSegs = (widget.textData!["root_text"] is Map)
+          ? (widget.textData!["root_text"] as Map).map(
+              (k, v) => MapEntry(k.toString(), v.toString()),
+            )
+          : {};
+      translationSegs = (widget.textData!["translation_text"] is Map)
+          ? (widget.textData!["translation_text"] as Map).map(
+              (k, v) => MapEntry(k.toString(), v.toString()),
+            )
+          : {};
+      commentarySegs = (widget.textData!["comment_text"] is Map)
+          ? (widget.textData!["comment_text"] as Map).map(
+              (k, v) => MapEntry(k.toString(), v.toString()),
+            )
+          : {};
 
-                // 1. Ambil Verse Num (bersih dari spasi)
-                final verseNumRaw = key.contains(":")
-                    ? key.split(":").last
-                    : key;
-                final verseNum = verseNumRaw.trim();
-
-                // 2. LOGIC DETEKSI HIRARKI HEADER (H1, H2, H3)
-
-                // --- DETEKSI HEADER ---
-                bool isH1 = verseNum == "0.1"; // Judul Utama
-                bool isH2 = verseNum == "0.2"; // Sub Judul
-
-                // Regex cocokkan semua "0.x" atau persis "0"
-                final headerRegex = RegExp(r"^0(\.\d+)?$");
-                final isHeader = headerRegex.hasMatch(verseNum);
-
-                // Sisanya dianggap H3
-                bool isH3 = isHeader && !isH1 && !isH2;
-
-                // 3. Tentukan Style & Padding (Jarak sudah dirapatkan)
-                TextStyle textStyle;
-                double topPadding;
-
-                if (isH1) {
-                  // STYLE H1 (Paling Besar)
-                  textStyle = TextStyle(
-                    fontSize: _fontSize * 1.8,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.black,
-                    height: 1.2,
-                    letterSpacing: -0.5,
-                  );
-                  topPadding = 16.0; // DISKON: Tadi 40.0
-                } else if (isH2) {
-                  // STYLE H2 (Besar)
-                  textStyle = TextStyle(
-                    fontSize: _fontSize * 1.5,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                    height: 1.3,
-                  );
-                  topPadding = 8.0; // DISKON: Tadi 16.0
-                } else if (isH3) {
-                  // STYLE H3 (Judul Bab)
-                  textStyle = TextStyle(
-                    fontSize: _fontSize * 1.25,
-                    fontWeight: FontWeight.w700, // Semi bold
-                    color: Colors.black87,
-                    height: 1.4,
-                  );
-                  topPadding = 16.0; // DISKON: Tadi 32.0
-                } else {
-                  // STYLE BODY (Ayat Biasa)
-                  textStyle = TextStyle(
-                    fontSize: _fontSize,
-                    fontWeight: FontWeight.normal,
-                    color: Colors.black,
-                    height: 1.6,
-                  );
-                  topPadding = 0.0;
-                }
-
-                // Cek teks kosong
-                final isTransEmpty = trans.trim().isEmpty;
-
-                return Padding(
-                  // Padding dinamis sesuai level header
-                  padding: EdgeInsets.only(bottom: 8, top: topPadding),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // === NOMOR AYAT (Tetap Kecil & Konsisten) ===
-                      SelectionContainer.disabled(
-                        child: Padding(
-                          // Turunin dikit kalau headernya H1/H2 biar sejajar visualnya
-                          padding: EdgeInsets.only(
-                            top: isH1 || isH2 ? 6.0 : 0.0,
-                          ),
-                          child: Text(
-                            verseNum,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey,
-                              height: 1.5,
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(width: 12),
-
-                      // === ISI TEKS (Sesuai Style H1/H2/H3) ===
-                      Expanded(
-                        child: Text.rich(
-                          TextSpan(
-                            children: [
-                              // Teks Utama (HIGHLIGHT SUPPORT)
-                              TextSpan(
-                                // Ganti 'text' jadi 'children' + _highlightText
-                                children: _highlightText(
-                                  // 1. Teksnya
-                                  isTransEmpty ? "... [pe] ..." : trans,
-
-                                  // 2. Style-nya (Pindahin logic style ke sini)
-                                  isTransEmpty
-                                      ? textStyle.copyWith(
-                                          color: Colors.grey,
-                                          fontStyle: FontStyle.italic,
-                                          fontSize: _fontSize,
-                                          fontWeight: FontWeight.normal,
-                                        )
-                                      : textStyle,
-                                  index, // 3. TAMBAHKAN INI (baris ke berapa)
-                                  0, // 4. TAMBAHKAN INI (mulai hitung dari 0)
-                                ),
-                              ),
-
-                              // Asterisk Komentar (Pake Fungsi Helper)
-                              if (comm.isNotEmpty)
-                                _buildCommentSpan(
-                                  context,
-                                  comm,
-                                  textStyle.fontSize ?? _fontSize,
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          );
-          break;
-        case ViewMode.lineByLine:
-          // GANTI SingleChildScrollView JADI ScrollablePositionedList
-          body = SelectionArea(
-            child: ScrollablePositionedList.builder(
-              // Tambahin controller biar bisa jump
-              itemScrollController: _itemScrollController,
-              itemPositionsListener: _itemPositionsListener,
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
-              itemCount: keysOrder.length,
-              itemBuilder: (context, index) {
-                // 1. Ambil Key by Index
-                final key = keysOrder[index];
-
-                // 2. LOGIC VARIABLE (SAMA PERSIS)
-                final verseNumRaw = key.contains(":")
-                    ? key.split(":").last
-                    : key;
-                final verseNum = verseNumRaw.trim();
-
-                // --- DETEKSI HEADER ---
-                bool isH1 = verseNum == "0.1"; // Judul Utama
-                bool isH2 = verseNum == "0.2"; // Sub Judul
-
-                // Regex cocokkan semua "0.x" atau persis "0"
-                final headerRegex = RegExp(r"^0(\.\d+)?$");
-                final isHeader = headerRegex.hasMatch(verseNum);
-
-                // Sisanya dianggap H3
-                bool isH3 = isHeader && !isH1 && !isH2;
-
-                // --- SISIPAN WARNA PALI ---
-                // Cek Tema HP (Gelap/Terang)
-                final isDark = Theme.of(context).brightness == Brightness.dark;
-                // Gelap = Kuning Emas (Amber 200), Terang = Oren Bata (DeepOrange 900)
-                final Color paliBodyColor = isDark
-                    ? Colors.amber[200]!
-                    : Colors.deepOrange[900]!;
-                // --------------------------
-
-                // Style Logic
-                TextStyle paliStyle;
-                TextStyle transStyle;
-                double topPadding;
-
-                if (isH1) {
-                  topPadding = 16.0;
-                  paliStyle = TextStyle(
-                    fontSize: _fontSize * 1.6,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.black, // Header tetap hitam biar tegas
-                    height: 1.2,
-                  );
-                  transStyle = TextStyle(
-                    fontSize: _fontSize * 1.6,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.black,
-                    height: 1.2,
-                  );
-                } else if (isH2) {
-                  topPadding = 8.0;
-                  paliStyle = TextStyle(
-                    fontSize: _fontSize * 1.4,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                    height: 1.3,
-                  );
-                  transStyle = TextStyle(
-                    fontSize: _fontSize * 1.4,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                    height: 1.3,
-                  );
-                } else if (isH3) {
-                  topPadding = 16.0;
-                  paliStyle = TextStyle(
-                    fontSize: _fontSize * 1.2,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.black87,
-                    height: 1.4,
-                  );
-                  transStyle = TextStyle(
-                    fontSize: _fontSize * 1.2,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.black87,
-                    height: 1.4,
-                  );
-                } else {
-                  // === BAGIAN BODY (AYAT BIASA) ===
-                  topPadding = 0.0;
-                  paliStyle = TextStyle(
-                    fontSize: _fontSize * 0.9,
-                    fontWeight: FontWeight.w500,
-                    color: paliBodyColor, // <--- BERUBAH DI SINI
-                    height: 1.5,
-                  );
-                  transStyle = TextStyle(
-                    fontSize: _fontSize,
-                    fontWeight: FontWeight.normal,
-                    color: Colors.black,
-                    height: 1.5,
-                  );
-                }
-
-                // Logic Teks Kosong & Komentar
-                var pali = paliSegs[key] ?? "";
-                if (pali.trim().isEmpty) pali = "... pe ...";
-
-                var trans = translationSegs[key] ?? "";
-                final isTransEmpty = trans.trim().isEmpty;
-                final comm = commentarySegs[key] ?? "";
-
-                final query = _searchController.text.trim();
-                final int paliMatchCount =
-                    (query.length >= 2 && _cachedSearchRegex != null)
-                    ? _cachedSearchRegex!.allMatches(pali.toLowerCase()).length
-                    : 0;
-
-                // 3. RETURN WIDGET (SAMA PERSIS, FITUR AMAN)
-                return Padding(
-                  padding: EdgeInsets.only(bottom: 12, top: topPadding),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Nomor Ayat
-                      SelectionContainer.disabled(
-                        child: Padding(
-                          padding: EdgeInsets.only(
-                            top: isH1 || isH2 ? 6.0 : 0.0,
-                          ),
-                          child: Text(
-                            verseNum,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-
-                      // Isi Ayat
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // === BARIS 1: PALI ===
-                            Text.rich(
-                              TextSpan(
-                                children: _highlightText(
-                                  pali,
-                                  paliStyle.copyWith(
-                                    fontStyle:
-                                        (pali == "... pe ..." &&
-                                            !isH1 &&
-                                            !isH2 &&
-                                            !isH3)
-                                        ? FontStyle.italic
-                                        : FontStyle.normal,
-                                    color:
-                                        (pali == "... pe ..." &&
-                                            !isH1 &&
-                                            !isH2 &&
-                                            !isH3)
-                                        ? Colors.grey
-                                        : paliStyle.color,
-                                  ),
-                                  index,
-                                  0,
-                                ),
-                              ),
-                            ),
-
-                            // === JARAK ANTARA PALI DAN TERJEMAHAN ===
-                            const SizedBox(height: 4),
-
-                            // === BARIS 2: TERJEMAHAN + ASTERISK ===
-                            Text.rich(
-                              TextSpan(
-                                children: [
-                                  // Terjemahan
-                                  TextSpan(
-                                    children: _highlightText(
-                                      isTransEmpty ? "... [dst] ..." : trans,
-                                      isTransEmpty
-                                          ? transStyle.copyWith(
-                                              color: Colors.grey,
-                                              fontStyle: FontStyle.italic,
-                                              fontSize: _fontSize,
-                                              fontWeight: FontWeight.normal,
-                                            )
-                                          : transStyle,
-                                      index,
-                                      paliMatchCount,
-                                    ),
-                                  ),
-
-                                  // Asterisk Komentar
-                                  if (comm.isNotEmpty)
-                                    _buildCommentSpan(
-                                      context,
-                                      comm,
-                                      transStyle.fontSize ?? _fontSize,
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          );
-          break;
-        case ViewMode.sideBySide:
-          // 1. Bungkus dengan SelectionArea (Fitur Copy-Paste Aman)
-          body = SelectionArea(
-            // GANTI ListView JADI ScrollablePositionedList
-            child: ScrollablePositionedList.builder(
-              // PASANG 2 BARIS INI BIAR FITUR JUMP JALAN
-              itemScrollController: _itemScrollController,
-              itemPositionsListener: _itemPositionsListener,
-
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
-              itemCount: keysOrder.length,
-              itemBuilder: (context, index) {
-                final key = keysOrder[index];
-
-                // 1. Ambil Verse Num dan bersihkan
-                final verseNumRaw = key.contains(":")
-                    ? key.split(":").last
-                    : key;
-                final verseNum = verseNumRaw.trim();
-
-                // 2. LOGIC DETEKSI HIRARKI HEADER (SAMA PERSIS)
-
-                // --- DETEKSI HEADER ---
-                bool isH1 = verseNum == "0.1"; // Judul Utama
-                bool isH2 = verseNum == "0.2"; // Sub Judul
-
-                // Regex cocokkan semua "0.x" atau persis "0"
-                final headerRegex = RegExp(r"^0(\.\d+)?$");
-                final isHeader = headerRegex.hasMatch(verseNum);
-
-                // Sisanya dianggap H3
-                bool isH3 = isHeader && !isH1 && !isH2;
-
-                // 3. Tentukan Style & Padding (SAMA PERSIS)
-                TextStyle paliStyle;
-                TextStyle transStyle;
-                double topPadding;
-
-                if (isH1) {
-                  topPadding = 16.0;
-                  paliStyle = TextStyle(
-                    fontSize: _fontSize * 1.6,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.black,
-                    height: 1.2,
-                  );
-                  transStyle = TextStyle(
-                    fontSize: _fontSize * 1.6,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.black,
-                    height: 1.2,
-                  );
-                } else if (isH2) {
-                  topPadding = 8.0;
-                  paliStyle = TextStyle(
-                    fontSize: _fontSize * 1.4,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                    height: 1.3,
-                  );
-                  transStyle = TextStyle(
-                    fontSize: _fontSize * 1.4,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                    height: 1.3,
-                  );
-                } else if (isH3) {
-                  topPadding = 16.0;
-                  paliStyle = TextStyle(
-                    fontSize: _fontSize * 1.2,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.black87,
-                    height: 1.4,
-                  );
-                  transStyle = TextStyle(
-                    fontSize: _fontSize * 1.2,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.black87,
-                    height: 1.4,
-                  );
-                } else {
-                  topPadding = 0.0;
-                  paliStyle = TextStyle(
-                    fontSize: _fontSize,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.black,
-                    height: 1.5,
-                  );
-                  transStyle = TextStyle(
-                    fontSize: _fontSize,
-                    fontWeight: FontWeight.normal,
-                    color: Colors.black,
-                    height: 1.5,
-                  );
-                }
-
-                // 4. Logic Isi Teks
-                var pali = paliSegs[key] ?? "";
-                if (pali.trim().isEmpty) pali = "... pe ...";
-
-                var trans = translationSegs[key] ?? "";
-                final isTransEmpty = trans.trim().isEmpty;
-
-                final comm = commentarySegs[key] ?? "";
-
-                final query = _searchController.text.trim();
-                final int paliMatchCount = (query.length >= 2)
-                    ? RegExp(
-                        RegExp.escape(query.toLowerCase()),
-                      ).allMatches(pali.toLowerCase()).length
-                    : 0;
-
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Padding(
-                      padding: EdgeInsets.only(top: topPadding),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // === SISI KIRI (PALI) ===
-                          Expanded(
-                            flex: 1,
-                            child: Text.rich(
-                              TextSpan(
-                                style: TextStyle(
-                                  fontSize: _fontSize,
-                                  color: Colors.black,
-                                ),
-                                children: [
-                                  // Nomor Ayat (Superscript trick)
-                                  WidgetSpan(
-                                    child: Transform.translate(
-                                      offset: const Offset(0, -6),
-                                      child: SelectionContainer.disabled(
-                                        child: Padding(
-                                          padding: EdgeInsets.only(
-                                            top: isH1 || isH2 ? 6.0 : 0.0,
-                                          ),
-                                          child: Text(
-                                            verseNum,
-                                            textScaleFactor: 0.7,
-                                            style: const TextStyle(
-                                              color: Colors.grey,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const TextSpan(text: " "),
-                                  // Teks Pali
-                                  // Isi Teks Pali
-                                  TextSpan(
-                                    // Pake 'children' + fungsi highlight
-                                    children: _highlightText(
-                                      pali, // Teksnya
-                                      // Style-nya (Pindahkan logic style kamu ke sini)
-                                      paliStyle.copyWith(
-                                        fontStyle:
-                                            (pali == "... pe ..." &&
-                                                !isH1 &&
-                                                !isH2 &&
-                                                !isH3)
-                                            ? FontStyle.italic
-                                            : FontStyle.normal,
-                                        color:
-                                            (pali == "... pe ..." &&
-                                                !isH1 &&
-                                                !isH2 &&
-                                                !isH3)
-                                            ? Colors.grey
-                                            : paliStyle
-                                                  .color, // Ini otomatis ngambil warna kuning/oren
-                                      ),
-                                      index, // 3. TAMBAHKAN INI (baris ke berapa)
-                                      0, // 4. TAMBAHKAN INI (mulai hitung dari 0)
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-
-                          // === SISI KANAN (TERJEMAHAN + ASTERISK) ===
-                          Expanded(
-                            flex: 2,
-                            child: Text.rich(
-                              TextSpan(
-                                children: [
-                                  // Teks Terjemahan
-                                  // Teks Terjemahan
-                                  TextSpan(
-                                    // Pake 'children' + fungsi highlight
-                                    children: _highlightText(
-                                      // Teksnya
-                                      isTransEmpty ? "... [pe] ..." : trans,
-
-                                      // Style-nya (Pindahkan logic style kamu ke sini)
-                                      isTransEmpty
-                                          ? transStyle.copyWith(
-                                              color: Colors.grey,
-                                              fontStyle: FontStyle.italic,
-                                              fontSize: _fontSize,
-                                              fontWeight: FontWeight.normal,
-                                            )
-                                          : transStyle,
-                                      index, // 3. TAMBAHKAN INI (baris ke berapa)
-                                      paliMatchCount, // <-- penting: offset global
-                                    ),
-                                  ),
-                                  // Asterisk (Pake Fungsi Helper yang baru kita buat)
-                                  if (comm.isNotEmpty)
-                                    _buildCommentSpan(
-                                      context,
-                                      comm,
-                                      transStyle.fontSize ?? _fontSize,
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                );
-              },
-            ),
-          );
-          break;
+      if (widget.textData!["keys_order"] is List) {
+        keysOrder = List<String>.from(widget.textData!["keys_order"]);
+      } else {
+        // Fallback generate keys manually
+        final metadataKeys = {
+          'previous',
+          'next',
+          'author_uid',
+          'vagga_uid',
+          'lang',
+          'title',
+          'acronym',
+          'text',
+        };
+        final source = translationSegs.isNotEmpty ? translationSegs : paliSegs;
+        keysOrder = source.keys
+            .where((k) => !metadataKeys.contains(k))
+            .toList();
       }
-      // switch ViewMode → assign body
-      // ... (Bagian if isSegmented biarin aja, itu udah bener) ...
-    } else if ((widget.textData!["translation_text"] is Map &&
+    } else {
+      paliSegs = {};
+      translationSegs = {};
+      commentarySegs = {};
+      keysOrder = [];
+    }
+
+    // 3. MENENTUKAN ISI BODY
+    Widget body;
+
+    // CASE A: SEGMENTED (Pakai Unified Builder yang kita buat)
+    if (isSegmented) {
+      body = SelectionArea(
+        child: ScrollablePositionedList.builder(
+          itemScrollController: _itemScrollController,
+          itemPositionsListener: _itemPositionsListener,
+          padding: const EdgeInsets.fromLTRB(
+            16,
+            16,
+            16,
+            80,
+          ), // Bottom padding buat FAB
+          itemCount: keysOrder.length,
+          itemBuilder: (context, index) {
+            return _buildSegmentedItem(
+              context,
+              index,
+              keysOrder[index],
+              paliSegs,
+              translationSegs,
+              commentarySegs,
+            );
+          },
+        ),
+      );
+    }
+    // CASE B: NON-SEGMENTED HTML
+    else if ((widget.textData!["translation_text"] is Map &&
             widget.textData!["translation_text"].containsKey("text")) ||
         (widget.textData!["root_text"] is Map &&
             widget.textData!["root_text"].containsKey("text"))) {
-      // Cek darurat: Kalau parsing di initState gagal atau belum selesai
+      // Parse HTML jika belum
       if (_htmlSegments.isEmpty) {
-        // Coba ambil rawHtml lagi buat diparsing dadakan (fallback)
         String rawHtml = "";
         if (widget.textData!["translation_text"] is Map &&
             widget.textData!["translation_text"].containsKey("text")) {
+          // ... logic unescape html trans ...
           final transMap = Map<String, dynamic>.from(
             widget.textData!["translation_text"],
           );
-          final sutta = NonSegmentedSutta.fromJson(transMap);
-          rawHtml = HtmlUnescape().convert(sutta.text);
-        } else {
-          final root = Map<String, dynamic>.from(widget.textData!["root_text"]);
-          final sutta = NonSegmentedSutta.fromJson(root);
-          rawHtml = HtmlUnescape().convert(sutta.text);
+          rawHtml = HtmlUnescape().convert(
+            NonSegmentedSutta.fromJson(transMap).text,
+          );
+        } else if (widget.textData!["root_text"] is Map) {
+          // ... logic unescape html root ...
+          final rootMap = Map<String, dynamic>.from(
+            widget.textData!["root_text"],
+          );
+          rawHtml = HtmlUnescape().convert(
+            NonSegmentedSutta.fromJson(rootMap).text,
+          );
         }
-
-        // Parse sekarang juga
-        _parseHtmlAndGenerateTOC(rawHtml);
-
-        // Kalau masih kosong juga setelah dipaksa parse, tampilkan loading/error
-        if (_htmlSegments.isEmpty) {
-          body = const Center(child: Text("Memproses tampilan..."));
-        }
+        if (rawHtml.isNotEmpty) _parseHtmlAndGenerateTOC(rawHtml);
       }
 
-      // Kalau _htmlSegments sudah ada isinya, render List-nya
-      if (_htmlSegments.isNotEmpty) {
-        body = SelectionArea(
-          child: ScrollablePositionedList.builder(
-            itemScrollController: _itemScrollController,
-            itemPositionsListener: _itemPositionsListener,
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
-            itemCount: _htmlSegments.length,
-            itemBuilder: (context, index) {
-              String content = _htmlSegments[index];
-              final query = _searchController.text;
-
-              // --- LOGIC HIGHLIGHT CANGGIH (ORANGE/YELLOW) ---
-              if (query.isNotEmpty &&
-                  query.length >= 2 &&
-                  _cachedSearchRegex != null) {
-                int localMatchCounter = 0;
-
-                content = content.replaceAllMapped(_cachedSearchRegex!, (
-                  match,
-                ) {
-                  bool isActive = false;
-
-                  // Cek apakah match ini adalah yang sedang difokuskan user?
-                  if (_allMatches.isNotEmpty &&
-                      _currentMatchIndex < _allMatches.length) {
-                    final activeMatch = _allMatches[_currentMatchIndex];
-                    // Logic: Barisnya sama DAN urutan ke-sekian di baris itu sama
-                    isActive =
-                        (activeMatch.listIndex == index &&
-                        activeMatch.matchIndexInSeg == localMatchCounter);
-                  }
-
-                  localMatchCounter++; // Naikkan hitungan match di baris ini
-
-                  String bgColor = isActive ? "orange" : "yellow";
-                  // Kalau aktif teksnya ditebalkan biar kelihatan
-                  String weight = isActive ? "900" : "bold";
-
-                  return "<span style='background-color: $bgColor; color: black; font-weight: $weight'>${match.group(0)}</span>";
-                });
-              }
-
-              // --- RENDER TAMPILAN ---
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8.0),
-                child: Html(
-                  data: content,
-                  style: {
-                    "body": Style(
-                      fontSize: FontSize(_fontSize),
-                      color: Colors.black, // Pastikan teks hitam
-                      lineHeight: LineHeight(1.6),
-                      margin: Margins.zero,
-                      padding: HtmlPaddings.zero,
-                      textAlign: TextAlign.justify, // Rata kanan-kiri biar rapi
-                    ),
-                    "h1": Style(
-                      fontSize: FontSize(_fontSize * 1.8),
-                      fontWeight: FontWeight.w900,
-                      margin: Margins.only(top: 24, bottom: 12),
-                    ),
-                    "h2": Style(
-                      fontSize: FontSize(_fontSize * 1.5),
-                      fontWeight: FontWeight.bold,
-                      margin: Margins.only(top: 20, bottom: 10),
-                    ),
-                    "h3": Style(
-                      fontSize: FontSize(_fontSize * 1.25),
-                      fontWeight: FontWeight.w700,
-                      margin: Margins.only(top: 16, bottom: 8),
-                    ),
-                  },
-                ),
-              );
-            },
-          ),
-        );
-      }
-    } else if (widget.textData!["root_text"] is Map &&
-        !(widget.textData!["root_text"].containsKey("text"))) {
-      // === KASUS: SEGMENTED ROOT ONLY (PALI SAJA) ===
-
-      final paliSegs2 = (widget.textData!["root_text"] as Map).map(
-        (key, value) => MapEntry(key.toString(), value.toString()),
-      );
-
-      // Pastikan urutan key konsisten
-      final keysOrder2 = widget.textData!["keys_order"] is List
-          ? List<String>.from(widget.textData!["keys_order"])
-          : paliSegs2.keys.toList();
-
-      // GANTI ListView JADI ScrollablePositionedList
       body = SelectionArea(
-        // Bungkus biar teks bisa dicopy
         child: ScrollablePositionedList.builder(
-          // 1. PASANG CONTROLLER (WAJIB BIAR BISA LONCAT)
           itemScrollController: _itemScrollController,
           itemPositionsListener: _itemPositionsListener,
-
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
-          itemCount: keysOrder2.length,
+          itemCount: _htmlSegments.length,
           itemBuilder: (context, index) {
-            final key = keysOrder2[index];
-            final pali = paliSegs2[key] ?? "";
-
-            // Logic ambil nomor verse
-            final verseNumRaw = key.contains(":") ? key.split(":").last : key;
-            final verseNum = verseNumRaw.trim();
-
-            // 2. LOGIC DETEKSI HEADING
-
-            // --- DETEKSI HEADER ---
-            bool isH1 = verseNum == "0.1"; // Judul Utama
-            bool isH2 = verseNum == "0.2"; // Sub Judul
-
-            // Regex cocokkan semua "0.x" atau persis "0"
-            final headerRegex = RegExp(r"^0(\.\d+)?$");
-            final isHeader = headerRegex.hasMatch(verseNum);
-
-            // Sisanya dianggap H3
-            bool isH3 = isHeader && !isH1 && !isH2;
-
-            // 3. TENTUKAN STYLE
-            TextStyle currentStyle;
-            double topPadding;
-            double bottomPadding;
-
-            if (isH1) {
-              currentStyle = TextStyle(
-                fontSize: _fontSize * 1.8,
-                fontWeight: FontWeight.w900,
-                color: Colors.black,
-                height: 1.2,
-              );
-              topPadding = 24.0;
-              bottomPadding = 16.0;
-            } else if (isH2) {
-              currentStyle = TextStyle(
-                fontSize: _fontSize * 1.5,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-                height: 1.3,
-              );
-              topPadding = 16.0;
-              bottomPadding = 12.0;
-            } else if (isH3) {
-              currentStyle = TextStyle(
-                fontSize: _fontSize * 1.25,
-                fontWeight: FontWeight.w700,
-                color: Colors.black87,
-                height: 1.4,
-              );
-              topPadding = 16.0;
-              bottomPadding = 8.0;
-            } else {
-              currentStyle = TextStyle(
-                fontSize: _fontSize,
-                fontWeight: FontWeight.w500,
-                color: Colors.black,
-                height: 1.6,
-              );
-              topPadding = 0.0;
-              bottomPadding = 8.0;
+            String content = _htmlSegments[index];
+            // Highlight Logic untuk HTML
+            if (_searchController.text.length >= 2 &&
+                _cachedSearchRegex != null) {
+              int localMatchCounter = 0;
+              content = content.replaceAllMapped(_cachedSearchRegex!, (match) {
+                bool isActive = false;
+                if (_allMatches.isNotEmpty &&
+                    _currentMatchIndex < _allMatches.length) {
+                  final activeMatch = _allMatches[_currentMatchIndex];
+                  isActive =
+                      (activeMatch.listIndex == index &&
+                      activeMatch.matchIndexInSeg == localMatchCounter);
+                }
+                localMatchCounter++;
+                String bgColor = isActive ? "orange" : "yellow";
+                return "<span style='background-color: $bgColor; color: black; font-weight: bold'>${match.group(0)}</span>";
+              });
             }
 
-            // 4. RETURN WIDGET (SOLUSI COPY-PASTE NYAMBUNG)
             return Padding(
-              padding: EdgeInsets.only(top: topPadding, bottom: bottomPadding),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // NOMOR AYAT: Dibungkus SelectionContainer.disabled supaya tidak bisa di-copy
-                  SelectionContainer.disabled(
-                    child: Padding(
-                      // Kalau mau adjust posisi vertikal (misalnya header H1/H2)
-                      padding: EdgeInsets.only(top: isH1 || isH2 ? 6.0 : 0.0),
-                      child: Text(
-                        verseNum,
-                        style: TextStyle(
-                          color: Colors.grey,
-                          fontSize:
-                              _fontSize *
-                              0.75, // sama dengan textScaleFactor 0.75
-                          height: 1.5,
-                        ),
-                      ),
-                    ),
+              padding: const EdgeInsets.only(bottom: 8.0),
+              child: Html(
+                data: content,
+                style: {
+                  "body": Style(
+                    fontSize: FontSize(_fontSize),
+                    lineHeight: LineHeight(1.6),
+                    margin: Margins.only(left: 10, right: 10),
+                    //textAlign: TextAlign.justify,
                   ),
-
-                  const SizedBox(width: 8),
-
-                  // TEKS PALI: Expanded biar fleksibel
-                  Expanded(
-                    child: Text.rich(
-                      TextSpan(
-                        children: _highlightText(
-                          pali,
-                          currentStyle.copyWith(
-                            fontStyle:
-                                (pali == "... pe ..." &&
-                                    !isH1 &&
-                                    !isH2 &&
-                                    !isH3)
-                                ? FontStyle.italic
-                                : FontStyle.normal,
-                            color:
-                                (pali == "... pe ..." &&
-                                    !isH1 &&
-                                    !isH2 &&
-                                    !isH3)
-                                ? Colors.grey
-                                : currentStyle.color,
-                          ),
-                          index,
-                          0,
-                        ),
-                      ),
-                    ),
+                  "h1": Style(
+                    fontSize: FontSize(_fontSize * 1.8),
+                    fontWeight: FontWeight.w900,
+                    margin: Margins.only(top: 24, bottom: 12),
                   ),
-                ],
+                  "h2": Style(
+                    fontSize: FontSize(_fontSize * 1.5),
+                    fontWeight: FontWeight.bold,
+                    margin: Margins.only(top: 20, bottom: 10),
+                  ),
+                  "h3": Style(
+                    fontSize: FontSize(_fontSize * 1.25),
+                    fontWeight: FontWeight.w700,
+                    margin: Margins.only(top: 16, bottom: 8),
+                  ),
+                },
               ),
             );
           },
         ),
       );
-    } else {
-      // Fallback
-      body = SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Text(
-          widget.textData.toString(),
-          style: TextStyle(fontSize: _fontSize),
+    }
+    // CASE C: PALI ONLY (Fallback Logic lama lu)
+    else if (widget.textData!["root_text"] is Map &&
+        !(widget.textData!["root_text"] as Map).containsKey("text")) {
+      // Kita reuse logic segmented item aja biar gak repetitif!
+      final paliOnlyMap = (widget.textData!["root_text"] as Map).map(
+        (k, v) => MapEntry(k.toString(), v.toString()),
+      );
+      final paliKeys = widget.textData!["keys_order"] is List
+          ? List<String>.from(widget.textData!["keys_order"])
+          : paliOnlyMap.keys.toList();
+
+      body = SelectionArea(
+        child: ScrollablePositionedList.builder(
+          itemScrollController: _itemScrollController,
+          itemPositionsListener: _itemPositionsListener,
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
+          itemCount: paliKeys.length,
+          itemBuilder: (context, index) {
+            // Panggil _buildSegmentedItem dengan map kosong buat trans & comm
+            return _buildSegmentedItem(
+              context,
+              index,
+              paliKeys[index],
+              paliOnlyMap,
+              {},
+              {},
+            );
+          },
         ),
       );
     }
+    // CASE D: ERROR
+    else {
+      body = const Center(child: Text("Format data tidak dikenali"));
+    }
 
-    return Scaffold(
-      // 1. JANGAN LUPA PASANG KEY INI
-      key: _scaffoldKey,
-
-      appBar: AppBar(
-        title: Text("${widget.uid} [${widget.lang}]"),
-        // Wajib ditulis actions kosong gini biar Flutter gak nambahin icon otomatis
-        actions: [SizedBox.shrink()],
-      ),
-
-      // 2. END DRAWER (Udah Bener)
-      endDrawer: _tocList.isNotEmpty
-          ? Drawer(
-              child: Column(
-                children: [
-                  const DrawerHeader(
-                    child: Center(
-                      child: Text(
-                        "Daftar Isi",
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
+    // 4. RETURN SCAFFOLD DENGAN FAB CLEAN
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        final allow = await _handleBackReplace();
+        if (allow) Navigator.pop(context, result);
+      },
+      child: Scaffold(
+        key: _scaffoldKey,
+        appBar: AppBar(
+          title: Text("${widget.uid} [${widget.lang}]"),
+          actions: const [SizedBox.shrink()],
+        ),
+        endDrawer: _tocList.isNotEmpty
+            ? Drawer(
+                child: Column(
+                  children: [
+                    const DrawerHeader(
+                      child: Center(
+                        child: Text(
+                          "Daftar Isi",
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: _tocList.length,
-                      itemBuilder: (context, index) {
-                        final item = _tocList[index];
-                        final level = item['type'] as int;
-                        return ListTile(
-                          contentPadding: EdgeInsets.only(
-                            left: level == 1 ? 16 : (level == 2 ? 32 : 48),
-                            right: 16,
-                          ),
-                          title: Text(
-                            item['title'],
-                            style: TextStyle(
-                              fontWeight: level == 1
-                                  ? FontWeight.bold
-                                  : FontWeight.normal,
-                              fontSize: level == 1 ? 16 : 14,
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: _tocList.length,
+                        itemBuilder: (context, index) {
+                          final item = _tocList[index];
+                          final level = item['type'] as int;
+                          return ListTile(
+                            contentPadding: EdgeInsets.only(
+                              left: level == 1 ? 16 : (level == 2 ? 32 : 48),
+                              right: 16,
                             ),
-                          ),
-                          onTap: () {
-                            Navigator.pop(context);
-                            if (_itemScrollController.isAttached) {
-                              _itemScrollController.scrollTo(
-                                index: item['index'],
-                                duration: const Duration(milliseconds: 250),
-                                curve: Curves.easeOutCubic,
-                                alignment: 0.1,
-                              );
-                            }
-                          },
-                        );
-                      },
+                            title: Text(
+                              item['title'],
+                              style: TextStyle(
+                                fontWeight: level == 1
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                            onTap: () {
+                              Navigator.pop(context);
+                              if (_itemScrollController.isAttached) {
+                                _itemScrollController.scrollTo(
+                                  index: item['index'],
+                                  duration: const Duration(milliseconds: 250),
+                                  curve: Curves.easeOutCubic,
+                                );
+                              }
+                            },
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            )
-          : null,
-
-      // 3. BODY HARUS PAKE STACK (Biar ada tombol melayang di kanan)
-      body: Stack(
-        children: [
-          // Layer Bawah: Teks
-          SelectionArea(child: body),
-
-          // Layer Atas: Tombol Daftar Isi di Kanan Tengah
-          //if (isSegmented && _tocList.isNotEmpty)
-          if (_tocList.isNotEmpty)
-            Positioned(
-              right: 0,
-              top: 0,
-              bottom: 0,
-              child: Center(
-                child: Material(
-                  color: Theme.of(context).primaryColor.withValues(alpha: 0.9),
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(12),
-                    bottomLeft: Radius.circular(12),
-                  ),
-                  elevation: 4,
-                  child: InkWell(
+                  ],
+                ),
+              )
+            : null,
+        body: Stack(
+          children: [
+            body,
+            // Tombol TOC Overlay
+            if (_tocList.isNotEmpty)
+              Positioned(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: Material(
+                    color: Theme.of(
+                      context,
+                    ).primaryColor.withValues(alpha: 0.9),
                     borderRadius: const BorderRadius.only(
                       topLeft: Radius.circular(12),
                       bottomLeft: Radius.circular(12),
                     ),
-                    onTap: () {
-                      // Panggil Drawer pake Key
-                      _scaffoldKey.currentState?.openEndDrawer();
-                    },
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(
-                        vertical: 12,
-                        horizontal: 8,
+                    child: InkWell(
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(12),
+                        bottomLeft: Radius.circular(12),
                       ),
-                      child: Icon(Icons.list, color: Colors.white, size: 28),
+                      onTap: () => _scaffoldKey.currentState?.openEndDrawer(),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(
+                          vertical: 12,
+                          horizontal: 8,
+                        ),
+                        child: Icon(Icons.list, color: Colors.white, size: 28),
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-        ],
+            // Loading Overlay
+            if (_isLoading)
+              Container(
+                color: Colors.black54,
+                child: const Center(child: CircularProgressIndicator()),
+              ),
+          ],
+        ),
+        floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+        floatingActionButton: _buildFloatingActions(isSegmented), // <-- BERSIH!
       ),
+    );
+  }
 
-      // 4. FLOATING ACTION BUTTON (Udah Bener)
-      // Posisi tetap di tengah bawah
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+  // ✅ 1. BUILDER UTAMA TOMBOL (FAB ROW)
+  Widget _buildFloatingActions(bool isSegmented) {
+    // Helper kecil biar gak repetitif nulis warna
+    Color getBgColor(bool isDisabled) => isDisabled
+        ? (Colors.grey[300]?.withValues(alpha: 0.9) ?? Colors.grey)
+        : Theme.of(context).colorScheme.primary.withValues(alpha: 0.9);
 
-      // Bungkus 2 tombol dalam Row
-      floatingActionButton: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          // 1. TOMBOL PENCARIAN (VERSI KOMPLIT: NO OVERLAY + PER KATA COUNTER)
-          FloatingActionButton.extended(
-            heroTag: "btn_cari",
-            label: const Text("Cari"),
-            icon: const Icon(Icons.search),
-            backgroundColor: (_htmlSegments.isNotEmpty
-                ? Colors.grey[300]?.withValues(alpha: 0.9) ?? Colors.grey
-                : Theme.of(context).colorScheme.primary.withValues(
-                    alpha: 0.9,
-                  )), // ✅ pakai withValues
-            foregroundColor: _htmlSegments.isNotEmpty
-                ? Colors.grey
-                : Colors.white,
-            onPressed: _htmlSegments.isNotEmpty
-                ? null
-                : () {
-                    showModalBottomSheet(
-                      context: context,
-                      isScrollControlled: true,
-                      backgroundColor: Colors.transparent,
-                      barrierColor:
-                          Colors.transparent, // Menghilangkan overlay abu-abu
-                      builder: (context) {
-                        return StatefulBuilder(
-                          builder: (ctx, setSheetState) {
-                            return Padding(
-                              padding: EdgeInsets.only(
-                                bottom: MediaQuery.of(
-                                  context,
-                                ).viewInsets.bottom,
+    Color getFgColor(bool isDisabled) =>
+        isDisabled ? Colors.grey : Colors.white;
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        // TOMBOL PREV
+        FloatingActionButton(
+          heroTag: "btn_prev",
+          backgroundColor: getBgColor(_isFirst || _isLoading),
+          foregroundColor: getFgColor(_isFirst || _isLoading),
+          onPressed: _isFirst || _isLoading ? null : _goToPrevSutta,
+          child: const Icon(Icons.arrow_back_ios_new),
+        ),
+        const SizedBox(width: 12),
+
+        // TOMBOL PENCARIAN
+        FloatingActionButton(
+          heroTag: "btn_cari",
+          backgroundColor: (_isLoading || _htmlSegments.isNotEmpty)
+              ? (Colors.grey[300]?.withValues(alpha: 0.9) ?? Colors.grey)
+              : Theme.of(context).colorScheme.primary.withValues(alpha: 0.9),
+          foregroundColor: (_isLoading || _htmlSegments.isNotEmpty)
+              ? Colors.grey
+              : Colors.white,
+          // Kalau HTML mode (non-segmented), disable search (sesuai kode lama)
+          onPressed: (_htmlSegments.isNotEmpty) ? null : _openSearchModal,
+          child: const Icon(Icons.search),
+        ),
+        const SizedBox(width: 12),
+
+        // TOMBOL SUTTAPLEX
+        FloatingActionButton(
+          heroTag: "btn_suttaplex",
+          backgroundColor: _isLoading
+              ? (Colors.grey[300]?.withValues(alpha: 0.9) ?? Colors.grey)
+              : Colors.deepOrange.withValues(alpha: 0.9),
+          foregroundColor: _isLoading ? Colors.grey : Colors.white,
+          onPressed: _isLoading ? null : _openSuttaplexModal,
+          child: const Icon(Icons.menu_book),
+        ),
+        const SizedBox(width: 12),
+
+        // TOMBOL TAMPILAN (VIEW MODE)
+        FloatingActionButton(
+          heroTag: "btn_tampilan",
+          backgroundColor: getBgColor(_isLoading),
+          foregroundColor: getFgColor(_isLoading),
+          onPressed: () => _openViewSettingsModal(isSegmented),
+          child: const Icon(Icons.visibility),
+        ),
+        const SizedBox(width: 12),
+
+        // TOMBOL NEXT
+        FloatingActionButton(
+          heroTag: "btn_next",
+          backgroundColor: getBgColor(_isLast || _isLoading),
+          foregroundColor: getFgColor(_isLast || _isLoading),
+          onPressed: _isLast || _isLoading ? null : _goToNextSutta,
+          child: const Icon(Icons.arrow_forward_ios),
+        ),
+      ],
+    );
+  }
+
+  // ✅ 2. LOGIC MODAL SEARCH (NO OVERLAY + COUNTER)
+  void _openSearchModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.transparent, // Fitur "No Overlay"
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom,
+              ),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).cardColor.withValues(alpha: 0.9),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black12,
+                      blurRadius: 10,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(16),
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _searchController,
+                            autofocus: true,
+                            decoration: InputDecoration(
+                              hintText: "Cari kata (min. 2 huruf)...",
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
                               ),
-                              child: Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context).cardColor.withValues(
-                                    alpha: 0.9,
-                                  ), // transparan 70%
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black12,
-                                      blurRadius: 10,
-                                      spreadRadius: 2,
-                                    ),
-                                  ],
-                                  borderRadius: const BorderRadius.vertical(
-                                    top: Radius.circular(16),
-                                  ),
-                                ),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: TextField(
-                                            controller: _searchController,
-                                            autofocus: true,
-                                            decoration: InputDecoration(
-                                              hintText:
-                                                  "Cari kata (min. 2 huruf)...",
-                                              border: OutlineInputBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                              ),
-                                              contentPadding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 12,
-                                                    vertical: 8,
-                                                  ),
-                                              suffixIcon: IconButton(
-                                                icon: const Icon(
-                                                  Icons.backspace_outlined,
-                                                ),
-                                                onPressed: () {
-                                                  _searchController.clear();
-                                                  // Tambahkan check mounted
-                                                  if (mounted) {
-                                                    setState(() {
-                                                      _allMatches.clear();
-                                                    });
-                                                  }
-                                                  // Update sheet state juga perlu check
-                                                  if (mounted) {
-                                                    setSheetState(() {});
-                                                  }
-                                                },
-                                              ),
-                                            ),
-                                            onChanged: (val) {
-                                              if (_debounce?.isActive ?? false)
-                                                _debounce!.cancel();
-
-                                              _debounce = Timer(
-                                                const Duration(
-                                                  milliseconds: 500,
-                                                ),
-                                                () {
-                                                  // Step 2: TAMBAHKAN CHECK INI
-                                                  if (!mounted)
-                                                    return; // <--- PENTING!
-
-                                                  if (val.trim().length >= 2) {
-                                                    _performSearch(val);
-                                                  } else {
-                                                    setState(() {
-                                                      _allMatches.clear();
-                                                    });
-                                                  }
-
-                                                  // Step 3: TAMBAHKAN CHECK di setSheetState juga
-                                                  if (mounted) {
-                                                    setSheetState(() {});
-                                                  }
-                                                },
-                                              );
-                                            },
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        IconButton(
-                                          icon: const Icon(Icons.close),
-                                          onPressed: () =>
-                                              Navigator.pop(context),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 12),
-                                    Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        // COUNTER PER KATA (Misal: 1 dari 10)
-                                        Text(
-                                          _allMatches.isEmpty
-                                              ? "0 hasil"
-                                              : "${_currentMatchIndex + 1} dari ${_allMatches.length} kata",
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        Row(
-                                          children: [
-                                            IconButton(
-                                              icon: const Icon(
-                                                Icons.arrow_upward,
-                                              ),
-                                              onPressed: _allMatches.isEmpty
-                                                  ? null
-                                                  : () {
-                                                      _jumpToResult(
-                                                        _currentMatchIndex - 1,
-                                                      );
-                                                      setSheetState(() {});
-                                                    },
-                                            ),
-                                            IconButton(
-                                              icon: const Icon(
-                                                Icons.arrow_downward,
-                                              ),
-                                              onPressed: _allMatches.isEmpty
-                                                  ? null
-                                                  : () {
-                                                      _jumpToResult(
-                                                        _currentMatchIndex + 1,
-                                                      );
-                                                      setSheetState(() {});
-                                                    },
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
                               ),
-                            );
-                          },
-                        );
-                      },
-                    ).whenComplete(() {
-                      // AUTO CLEAR: Hapus highlight saat pencarian ditutup
-                      _debounce
-                          ?.cancel(); // cancel timer biar nggak nembak lagi
-                      setState(() {
-                        _searchController.clear();
-                        _allMatches.clear();
-                      });
-                    });
-                  },
-          ),
-          const SizedBox(width: 12), // Jarak antar tombol
-          // 2. TOMBOL MENU (YANG LAMA)
-          FloatingActionButton.extended(
-            heroTag: "btn_tampilan", // Ganti tag biar rapi (opsional)
-            label: const Text("Tampilan"), // Ganti Teks
-            icon: const Icon(Icons.visibility), // Ganti Ikon Mata
-            backgroundColor: Theme.of(
-              context,
-            ).colorScheme.primary.withValues(alpha: 0.9), // ✅ opacity 0.9
-            foregroundColor: Colors.white,
-            onPressed: () {
-              showModalBottomSheet(
-                context: context,
-                builder: (context) {
-                  return SafeArea(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (isSegmented && widget.lang != "pli")
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: ElevatedButton(
-                                    onPressed: () => setState(
-                                      () => _viewMode = ViewMode.lineByLine,
-                                    ),
-                                    child: const FittedBox(
-                                      fit: BoxFit.scaleDown,
-                                      child: Text("Atas-bawah"),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: ElevatedButton(
-                                    onPressed: () => setState(
-                                      () => _viewMode = ViewMode.sideBySide,
-                                    ),
-                                    child: const FittedBox(
-                                      fit: BoxFit.scaleDown,
-                                      child: Text("Kiri-kanan"),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: ElevatedButton(
-                                    onPressed: () => setState(
-                                      () =>
-                                          _viewMode = ViewMode.translationOnly,
-                                    ),
-                                    child: const FittedBox(
-                                      fit: BoxFit.scaleDown,
-                                      child: Text("Tanpa Pāli"),
-                                    ),
-                                  ),
-                                ),
-                              ],
+                              suffixIcon: IconButton(
+                                icon: const Icon(Icons.backspace_outlined),
+                                onPressed: () {
+                                  _searchController.clear();
+                                  if (mounted)
+                                    setState(() => _allMatches.clear());
+                                  if (mounted) setSheetState(() {});
+                                },
+                              ),
                             ),
-                          const SizedBox(height: 12),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              OutlinedButton.icon(
-                                icon: const Icon(Icons.text_decrease),
-                                label: const Text("Kecil"),
-                                onPressed: () => setState(
-                                  () => _fontSize = (_fontSize - 2).clamp(
-                                    12.0,
-                                    30.0,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton.icon(
-                                icon: const Icon(Icons.refresh),
-                                label: const Text("Reset"),
-                                onPressed: () =>
-                                    setState(() => _fontSize = 16.0),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton.icon(
-                                icon: const Icon(Icons.text_increase),
-                                label: const Text("Besar"),
-                                onPressed: () => setState(
-                                  () => _fontSize = (_fontSize + 2).clamp(
-                                    12.0,
-                                    30.0,
-                                  ),
-                                ),
-                              ),
-                            ],
+                            onChanged: (val) {
+                              if (_debounce?.isActive ?? false)
+                                _debounce!.cancel();
+                              _debounce = Timer(
+                                const Duration(milliseconds: 500),
+                                () {
+                                  if (!mounted) return;
+                                  if (val.trim().length >= 2) {
+                                    _performSearch(val);
+                                  } else {
+                                    setState(() => _allMatches.clear());
+                                  }
+                                  if (mounted) setSheetState(() {});
+                                },
+                              );
+                            },
                           ),
-                        ],
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    // Counter & Navigasi Search
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          _allMatches.isEmpty
+                              ? "0 hasil"
+                              : "${_currentMatchIndex + 1} dari ${_allMatches.length} kata",
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.arrow_upward),
+                              onPressed: _allMatches.isEmpty
+                                  ? null
+                                  : () {
+                                      _jumpToResult(_currentMatchIndex - 1);
+                                      setSheetState(() {});
+                                    },
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.arrow_downward),
+                              onPressed: _allMatches.isEmpty
+                                  ? null
+                                  : () {
+                                      _jumpToResult(_currentMatchIndex + 1);
+                                      setSheetState(() {});
+                                    },
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    ).whenComplete(() {
+      // Auto Clear pas tutup
+      _debounce?.cancel();
+      setState(() {
+        _searchController.clear();
+        _allMatches.clear();
+      });
+    });
+  }
+
+  // ✅ 3. LOGIC MODAL SUTTAPLEX
+  void _openSuttaplexModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => FractionallySizedBox(
+        heightFactor: 0.85,
+        child: Suttaplex(
+          uid: widget.uid,
+          onSelect: (newUid, lang, authorUid, textData) {
+            _replaceToSutta(
+              newUid,
+              lang,
+              authorUid: authorUid,
+              segmented: textData["segmented"] == true,
+              textData: textData,
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  // ✅ 4. LOGIC MODAL TAMPILAN (VIEW SETTINGS)
+  void _openViewSettingsModal(bool isSegmented) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (isSegmented && widget.lang != "pli")
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () =>
+                              setState(() => _viewMode = ViewMode.lineByLine),
+                          child: const FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text("Atas-bawah"),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () =>
+                              setState(() => _viewMode = ViewMode.sideBySide),
+                          child: const FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text("Kiri-kanan"),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () => setState(
+                            () => _viewMode = ViewMode.translationOnly,
+                          ),
+                          child: const FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text("Tanpa Pāli"),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.text_decrease),
+                      label: const Text("Kecil"),
+                      onPressed: () => setState(
+                        () => _fontSize = (_fontSize - 2).clamp(12.0, 30.0),
                       ),
                     ),
-                  );
-                },
-              );
-            },
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.refresh),
+                      label: const Text("Reset"),
+                      onPressed: () => setState(() => _fontSize = 16.0),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.text_increase),
+                      label: const Text("Besar"),
+                      onPressed: () => setState(
+                        () => _fontSize = (_fontSize + 2).clamp(12.0, 30.0),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -1899,4 +2264,34 @@ class SearchMatch {
   final int matchIndexInSeg; // Urutan kata di dalam baris itu (ke-1, ke-2, dst)
 
   SearchMatch(this.listIndex, this.matchIndexInSeg);
+}
+
+// Struktur hasil cek
+class _Avail {
+  final String targetLang; // "id" | "en" | "pli"
+  final bool hasTranslation; // true untuk id/en
+  const _Avail(this.targetLang, this.hasTranslation);
+}
+
+// Helper Class kecil biar return-nya rapi (bisa taruh di paling bawah file atau file terpisah)
+class SuttaHeaderConfig {
+  final bool isH1;
+  final bool isH2;
+  final bool isH3;
+  final String verseNum;
+  final TextStyle paliStyle;
+  final TextStyle transStyle;
+  final double topPadding;
+  final double bottomPadding;
+
+  SuttaHeaderConfig({
+    required this.isH1,
+    required this.isH2,
+    required this.isH3,
+    required this.verseNum,
+    required this.paliStyle,
+    required this.transStyle,
+    required this.topPadding,
+    required this.bottomPadding,
+  });
 }

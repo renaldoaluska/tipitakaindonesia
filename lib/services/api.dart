@@ -1,5 +1,6 @@
 import 'dart:collection';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 class Api {
   Api._(); // no instance
@@ -25,6 +26,9 @@ class Api {
   /// =========================
   /// PUBLIC GET
   /// =========================
+  /// Tambahin batas maksimal cache biar HP ga meledak
+  static const int _maxCacheSize = 100;
+
   static Future<dynamic> get(
     String path, {
     Map<String, dynamic>? query,
@@ -33,12 +37,12 @@ class Api {
   }) async {
     final key = _makeKey(path, query);
 
-    // 🔁 return inflight request
+    // 1. Cek Inflight (tetap sama)
     if (_inflight.containsKey(key)) {
       return _inflight[key]!;
     }
 
-    // 🧠 cache hit
+    // 2. Cek Cache (tetap sama)
     if (!forceRefresh && _cache.containsKey(key)) {
       final entry = _cache[key]!;
       if (!entry.isExpired) {
@@ -48,19 +52,33 @@ class Api {
       }
     }
 
-    // 🌐 fetch from API
+    // 3. Request API
     final future = _dio
         .get(path, queryParameters: query)
         .then((res) {
+          // --- TAMBAHAN: Memory Safety ---
+          if (_cache.length >= _maxCacheSize) {
+            // Hapus entry pertama (paling tua dimasukin) kalau penuh
+            // Atau bisa clear semua: _cache.clear();
+            final firstKey = _cache.keys.first;
+            _cache.remove(firstKey);
+          }
+          // -------------------------------
+
           _cache[key] = _CacheEntry(
             data: res.data,
             expiry: DateTime.now().add(ttl),
           );
           return res.data;
         })
+        // --- REVISI: Error Handling ---
+        // Jangan di-catch lalu di-throw Exception string doang.
+        // Biarin UI yang handle DioException, atau rethrow.
         .catchError((e) {
-          throw Exception("API error [$path]: $e");
+          debugPrint("❌ Error [$path]: $e");
+          throw e; // Lempar aslinya biar UI tau ini timeout/404/dll
         })
+        // -----------------------------
         .whenComplete(() {
           _inflight.remove(key);
         });
@@ -73,10 +91,33 @@ class Api {
   /// CACHE CONTROL
   /// =========================
 
-  static void clear() => _cache.clear();
+  /// Clear seluruh cache
+  static void clear() {
+    _cache.clear();
+    debugPrint("🗑️ Cache cleared");
+  }
 
+  /// Invalidate specific entry
   static void invalidate(String path, {Map<String, dynamic>? query}) {
-    _cache.remove(_makeKey(path, query));
+    final key = _makeKey(path, query);
+    _cache.remove(key);
+    debugPrint("🔄 Invalidated: $path");
+  }
+
+  /// Get cache stats (untuk monitoring/debug)
+  static Map<String, int> getStats() {
+    return {
+      "cached_entries": _cache.length,
+      "inflight_requests": _inflight.length,
+    };
+  }
+
+  /// Print cache stats ke console
+  static void printStats() {
+    final stats = getStats();
+    debugPrint(
+      "📊 Cache Stats: ${stats['cached_entries']} entries, ${stats['inflight_requests']} inflight",
+    );
   }
 
   /// =========================
