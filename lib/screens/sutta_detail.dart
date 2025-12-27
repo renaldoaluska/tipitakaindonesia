@@ -16,7 +16,7 @@ class SuttaDetail extends StatefulWidget {
   final Map<String, dynamic>? textData;
 
   final bool openedFromSuttaDetail;
-  final String? originalSuttaUid;
+  final String? originalSuttaUid; // ✅ INI UDAH ADA!
 
   const SuttaDetail({
     super.key,
@@ -24,7 +24,7 @@ class SuttaDetail extends StatefulWidget {
     required this.lang,
     required this.textData,
     this.openedFromSuttaDetail = false, // ✅ Default false
-    this.originalSuttaUid, // ✅ Nullable
+    this.originalSuttaUid, // ✅ Pakai ini sebagai penanda "first sutta"
   });
 
   @override
@@ -114,6 +114,12 @@ class _SuttaDetailState extends State<SuttaDetail> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ScaffoldMessenger.of(context).clearMaterialBanners();
     });
+  }
+
+  bool get _isRootOnly {
+    final trans = widget.textData?["translation_text"];
+    // root only kalau translation kosong/null
+    return trans == null || (trans is Map && trans.isEmpty);
   }
 
   // 3. Logic Cari Heading (H1, H2, H3) buat Daftar Isi
@@ -485,7 +491,7 @@ class _SuttaDetailState extends State<SuttaDetail> {
     }
   }
 
-  void _initNavigationContext() {
+  Future<void> _initNavigationContext() async {
     print("=== INIT NAVIGATION ===");
     print("root_text: ${widget.textData?["root_text"]}");
     print("vagga_uid: ${widget.textData?["root_text"]?["vagga_uid"]}");
@@ -499,6 +505,16 @@ class _SuttaDetailState extends State<SuttaDetail> {
           root["vagga_uid"]?.toString() ??
           widget.textData?["resolved_vagga_uid"]?.toString();
 
+      // 🔥 RESOLVE KALAU NULL
+      if (_parentVaggaId == null) {
+        final resolved = await _resolveVaggaUid(widget.uid);
+        if (resolved != null && mounted) {
+          setState(() {
+            _parentVaggaId = resolved;
+          });
+          print("🔄 Resolved vagga at init: $_parentVaggaId");
+        }
+      }
       final prev = root["previous"];
       final next = root["next"];
 
@@ -526,18 +542,7 @@ class _SuttaDetailState extends State<SuttaDetail> {
   }
 
   Future<bool> _handleBackReplace() async {
-    // 🛑 SATPAM: Cek dulu ini Sutta hasil Next/Prev atau bukan?
-    // Kalau ini hasil Next/Prev (openedFromSuttaDetail == true),
-    // biarkan dia BACK NORMAL (mundur history) tanpa dialog.
-    if (widget.openedFromSuttaDetail) {
-      return true; // true = izinkan Navigator.pop jalan
-    }
-
-    print("=== BACK HANDLER (ROOT SUTTA) ===");
-    print("Mencari induk untuk kembali...");
-
-    // 1. Kalau ini Sutta PERTAMA (openedFromSuttaDetail == false),
-    // Kita cari induknya buat siap-siap "Exit to Menu"
+    // 1. Coba resolve parent vagga kalau belum ada
     if (_parentVaggaId == null) {
       final resolved = await _resolveVaggaUid(widget.uid);
       if (mounted && resolved != null) {
@@ -547,89 +552,96 @@ class _SuttaDetailState extends State<SuttaDetail> {
       }
     }
 
-    // 2. Kalau Induk ketemu, TAMPILKAN DIALOG "TINGGALKAN MODE BACA?"
-    if (_parentVaggaId != null) {
-      final shouldLeave = await showDialog<bool>(
-        context: context,
-        barrierDismissible: true,
-        builder: (ctx) => AlertDialog(
-          title: Row(
+    // 🔥 LOGIC SIMPEL & KETAT:
+    // Aturan 1: Kalau user pernah navigasi (Next/Prev), tombol Back WAJIB tanya "Keluar?".
+    // Aturan 2: Kalau baru buka pertama kali, tanya hanya jika kita tau mau balik kemana.
+
+    bool shouldShowDialog = false;
+
+    if (widget.openedFromSuttaDetail) {
+      // ✅ Kasus Navigasi: Selalu dialog.
+      shouldShowDialog = true;
+    } else {
+      // ✅ Kasus Awal: Dialog jika parent ada.
+      shouldShowDialog = (_parentVaggaId != null);
+    }
+
+    // 2. Kalo gak perlu dialog, langsung keluar
+    if (!shouldShowDialog) {
+      Navigator.pop(context);
+      return true;
+    }
+
+    // 3. Tampilkan Dialog
+    final shouldLeave = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true, // Bisa di-dismiss dengan klik luar
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.logout_rounded, color: Theme.of(context).primaryColor),
+            const SizedBox(width: 12),
+            const Flexible(
+              child: Text(
+                "Tinggalkan mode baca?",
+                style: TextStyle(fontSize: 18),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          "Posisi bacaan akan kembali ke daftar awal.",
+          style: TextStyle(color: Colors.grey),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        actions: [
+          Row(
             children: [
-              Icon(Icons.logout_rounded, color: Theme.of(context).primaryColor),
-              const SizedBox(width: 12),
-              const Flexible(
-                child: Text(
-                  "Tinggalkan mode baca?",
-                  style: TextStyle(fontSize: 18),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: const Text("Batal"),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: const Text("Ya, Keluar"),
                 ),
               ),
             ],
           ),
-          content: const Text(
-            "Posisi bacaan akan kembali ke daftar awal.",
-            style: TextStyle(color: Colors.grey),
-          ),
-          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          actions: [
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(ctx, false), // JANGAN KELUAR
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    child: const Text("Batal"),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: FilledButton(
-                    onPressed: () => Navigator.pop(ctx, true), // YAKIN KELUAR
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    child: const Text("Ya, Keluar"),
-                  ),
-                ),
-              ],
-            ),
-          ],
+        ],
+      ),
+    );
+
+    if (shouldLeave != true) return false;
+    if (!mounted) return false;
+
+    // 4. Eksekusi Exit & Redirect
+    Navigator.of(context).popUntil((route) => route.isFirst);
+
+    // Buka Root Kitab (misal: MN) agar stack navigasi rapi
+    final rootPrefix =
+        RegExp(r'^[A-Za-z]+(?:-[A-Za-z]+)?').stringMatch(widget.uid) ?? "";
+    if (rootPrefix.isNotEmpty && rootPrefix != _parentVaggaId) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          settings: RouteSettings(name: '/$rootPrefix'),
+          builder: (_) => MenuPage(uid: rootPrefix),
         ),
       );
+    }
 
-      if (shouldLeave != true) return false; // Batal back
-      if (!mounted) return false;
-      // ✅ OPTIMASI BARU:
-      // Kalau user GAK pernah Next/Prev (stack masih murni),
-      // Cukup pop biasa aja. Ini lebih mulus & posisi scroll menu terjaga.
-      // if (!_hasNavigated) {
-      //  Navigator.pop(context, true);
-      //  return false;
-      // }
-
-      // --- EKSEKUSI KELUAR KE MENU (Hanya kalau Stack sudah "kotor" karena Next/Prev) ---
-
-      // OPTIONAL: Bersihkan cache SuttaService biar RAM lega lagi setelah sesi baca selesai
-      // (Api cache tetep jalan, jadi kalau user masuk lagi tetep cepet, cuma perlu parsing ulang dikit)
-      SuttaService.clearCache();
-      print("Cleared SuttaService memory cache.");
-      // Bersihkan tumpukan Sutta, sisakan root
-      Navigator.of(context).popUntil((route) => route.isFirst);
-
-      // (Opsional) Push Root Prefix (misal DN/MN) kalau perlu biar breadcrumb rapi
-      final rootPrefix =
-          RegExp(r'^[A-Za-z]+(?:-[A-Za-z]+)?').stringMatch(widget.uid) ?? "";
-      if (rootPrefix.isNotEmpty) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            settings: RouteSettings(name: '/$rootPrefix'),
-            builder: (_) => MenuPage(uid: rootPrefix),
-          ),
-        );
-      }
-
-      // Format Acronym buat judul header menu
+    // Buka Vagga Terakhir (misal: mn-paribbajakavagga)
+    if (_parentVaggaId != null) {
       String rawAcronym =
           widget.textData?["root_text"]?["acronym"]?.toString() ?? "";
       if (rawAcronym.isEmpty) {
@@ -644,7 +656,6 @@ class _SuttaDetailState extends State<SuttaDetail> {
           ? rawAcronym[0].toUpperCase() + rawAcronym.substring(1)
           : "";
 
-      // Push ke Halaman Menu (Vagga)
       Navigator.of(context).push(
         MaterialPageRoute(
           settings: RouteSettings(name: '/vagga/$_parentVaggaId'),
@@ -652,14 +663,9 @@ class _SuttaDetailState extends State<SuttaDetail> {
               MenuPage(uid: _parentVaggaId!, parentAcronym: formattedAcronym),
         ),
       );
-
-      return false; // Kita handle navigasi sendiri, jadi return false
     }
 
-    // 3. Fallback kalau gak punya parent (misal teks lepas/error), back normal aja
-    print("No dialog, back normal");
-    Navigator.pop(context);
-    return true;
+    return false;
   }
 
   void _replaceToRoute(String route, {bool slideFromLeft = false}) {
@@ -692,9 +698,7 @@ class _SuttaDetailState extends State<SuttaDetail> {
     bool slideFromLeft = false,
   }) async {
     setState(() => _isLoading = true);
-
     try {
-      // Kalau data sudah ada (dari Suttaplex modal), langsung pakai
       final data =
           textData ??
           await SuttaService.fetchFullSutta(
@@ -705,49 +709,14 @@ class _SuttaDetailState extends State<SuttaDetail> {
             siteLanguage: "id",
           );
 
-      print("=== _replaceToSutta DEBUG ===");
-      print("Source: ${textData != null ? '🔵 Suttaplex' : '🟢 API'}");
-      print("UID: $newUid | Lang: $lang | Segmented: $segmented");
-      print("Data keys: ${data.keys}");
+      debugPrint("=== _replaceToSutta DEBUG ===");
+      debugPrint("Source: ${textData != null ? '🔵 Suttaplex' : '🟢 API'}");
+      debugPrint("UID: $newUid | Lang: $lang | Segmented: $segmented");
 
-      if (data["root_text"] is Map) {
-        final rootMap = data["root_text"] as Map;
-        print("root_text: ${rootMap.keys.length} keys");
-        // Sample beberapa key
-        final sampleKeys = rootMap.keys.take(5).toList();
-        print("  sample keys: $sampleKeys");
-      }
-
-      if (data["translation_text"] is Map) {
-        final transMap = data["translation_text"] as Map;
-        print("translation_text: ${transMap.keys.length} keys");
-        final sampleKeys = transMap.keys.take(5).toList();
-        print("  sample keys: $sampleKeys");
-      }
-
-      print("keys_order: ${data["keys_order"]}");
-      print("=============================\n");
-
-      // ✅ SIMPLE MERGE - Service sudah handle semua normalisasi
       final mergedData = {...data, "suttaplex": widget.textData?["suttaplex"]};
 
-      // Update navigation state
-      _updateParentAnchorOnMove(
-        mergedData["root_text"] as Map<String, dynamic>?,
-        mergedData["suttaplex"] as Map<String, dynamic>?,
-      );
-
-      // Resolve vagga
-      final root = mergedData["root_text"];
-      if (root is Map && root["vagga_uid"] != null) {
-        setState(() => _parentVaggaId = root["vagga_uid"].toString());
-      } else {
-        final resolvedVagga = await _resolveVaggaUid(newUid);
-        if (resolvedVagga != null) {
-          setState(() => _parentVaggaId = resolvedVagga);
-          mergedData["resolved_vagga_uid"] = resolvedVagga;
-        }
-      }
+      // ✅ REFACTORED: Semua logic vagga di satu tempat
+      await _processVaggaTracking(mergedData, newUid);
 
       if (!mounted) return;
 
@@ -783,7 +752,6 @@ class _SuttaDetailState extends State<SuttaDetail> {
       debugPrint("Stack: $stackTrace");
 
       if (!mounted) return;
-
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
@@ -805,36 +773,38 @@ class _SuttaDetailState extends State<SuttaDetail> {
   }*/
 
   /// Helper untuk resolve vagga_uid dari sutta uid
-  /// Contoh: mn61 -> cari di menu/mn, ketemu di range MN 51-100 -> return "mn-majjhimapannasa"
-  /// Helper untuk resolve vagga_uid dari sutta uid
-  /// FIXED: Sekarang support format 3 angka (misal: SN 3.11-20 -> [3, 11, 20])
-  // ✅ LOGIC PENCARI ORANG TUA KANDUNG (DRILL DOWN - FINAL)
-  // Menangani struktur dalam kayak SN & AN (Collection -> Book -> Vagga -> Sutta)
   Future<String?> _resolveVaggaUid(String suttaUid) async {
-    try {
-      print("=== 🕵️ START DRILL DOWN: $suttaUid ===");
+    print("\n========================================");
+    print("🕵️ START DRILL DOWN: $suttaUid");
+    print("========================================");
 
-      // 1. Parsing UID (sn12.10 -> coll: sn, book: 12, sutta: 10)
-      final regex = RegExp(r'^([a-z]+)(\d+)(?:\.(\d+))?');
+    try {
+      // 1. Parsing UID - Support format dengan strip (tha-ap) dan tanpa strip (ud3.3)
+      final regex = RegExp(r'^([a-z]+(?:-[a-z]+)?)(\d+)(?:\.(\d+))?');
       final match = regex.firstMatch(suttaUid.toLowerCase());
 
-      if (match == null) return null;
+      if (match == null) {
+        print("❌ REGEX MATCH FAILED");
+        return null;
+      }
 
-      final collection = match.group(1)!; // sn
-      final bookNum = int.parse(match.group(2)!); // 12
+      final collection = match.group(1)!; // sn, ud, tha-ap, thi-ap
+      final bookNum = int.parse(match.group(2)!); // 12, 3
       final suttaNum = match.group(3) != null
           ? int.parse(match.group(3)!)
-          : null; // 10
+          : null; // 10, 3
 
-      print("🎯 Target: $collection Book:$bookNum Sutta:$suttaNum");
+      print("🎯 Target Parsed:");
+      print("   Collection: $collection");
+      print("   Book Number: $bookNum");
+      print("   Sutta Number: ${suttaNum ?? 'null'}");
 
       // Mulai dari Root Koleksi
       String currentParent = collection;
+      String? lastValidParent;
 
-      // Loop maksimal 5 level (SN -> SN 12-21 -> SN 12 -> SN 12.1-10)
+      // Loop maksimal 5 level
       for (int level = 0; level < 5; level++) {
-        // print("🔍 Level $level Checking: $currentParent");
-
         final menuData = await SuttaService.fetchMenu(
           currentParent,
           language: "id",
@@ -843,90 +813,164 @@ class _SuttaDetailState extends State<SuttaDetail> {
 
         final root = menuData[0];
         final children = root["children"] as List?;
-        if (children == null || children.isEmpty) break;
+        if (children == null || children.isEmpty) {
+          if (currentParent != collection) {
+            lastValidParent = currentParent;
+          }
+          break;
+        }
 
         String? nextParent;
 
         // Scan anak-anak di level ini
         for (var child in children) {
+          final childUid = child["uid"]?.toString() ?? "";
           final rangeStr = child["child_range"]?.toString() ?? "";
+
           if (rangeStr.isEmpty) continue;
 
           // Parsing Angka dari Range
-          // Contoh "SN 1–11" -> [1, 11]
-          // Contoh "SN 12" -> [12]
-          // Contoh "SN 12.1-10" -> [12, 1, 10] (Book, Start, End)
           final nums = RegExp(
             r'(\d+)',
           ).allMatches(rangeStr).map((m) => int.parse(m.group(1)!)).toList();
+
           if (nums.isEmpty) continue;
 
-          // LOGIC PENCOCOKAN YANG LEBIH PINTAR
           bool isMatch = false;
 
-          // 1. Cek Level Buku Range (SN 1-11)
+          // 🔥 CASE 1: Level Buku Range - SN/AN style (SN 1-11, AN 1.1-10)
           if (level == 0 && (collection == 'sn' || collection == 'an')) {
             int start = nums.first;
             int end = nums.last;
             if (bookNum >= start && bookNum <= end) isMatch = true;
           }
-          // 2. Cek Level Buku Tunggal (SN 12)
-          // Range biasanya cuma 1 angka = NOMOR BUKU
-          else if (nums.length == 1 && nums.first == bookNum) {
-            // Pastikan UID child mengandung bookNum kita (biar gak salah tangkap angka lain)
-            if (child['uid'].toString().contains(bookNum.toString()))
-              isMatch = true;
+          // 🔥 CASE 2: Simple Range - MN/DN style (MN 1-10, Dhp 1-20)
+          else if (nums.length == 2 && suttaNum == null) {
+            int start = nums[0];
+            int end = nums[1];
+            if (bookNum >= start && bookNum <= end) isMatch = true;
           }
-          // 3. Cek Level Sutta Range (SN 12.1-10) -> [12, 1, 10]
-          // Ini logic khusus buat SN/AN yang punya range sutta di dalam buku
-          else if (suttaNum != null && nums.length >= 3) {
-            // Pastikan Buku-nya cocok dulu (Angka Pertama)
-            if (nums[0] == bookNum) {
-              int start =
-                  nums[nums.length -
-                      2]; // Angka ke-2 dari belakang (Start Sutta)
-              int end = nums.last; // Angka terakhir (End Sutta)
+          // 🔥 CASE 3: Sutta Range dengan Format "Collection BookNum.Start-End"
+          // Contoh: "Ud 3.1-10", "Snp 1.1-12"
+          else if (nums.length == 3 && suttaNum != null) {
+            // nums = [3, 1, 10] untuk "Ud 3.1-10"
+            int rangeBook = nums[0];
+            int start = nums[1];
+            int end = nums[2];
 
-              if (suttaNum >= start && suttaNum <= end) {
-                isMatch = true;
-              }
+            if (rangeBook == bookNum && suttaNum >= start && suttaNum <= end) {
+              isMatch = true;
             }
           }
-          // 4. Cek Level Sutta Range tanpa Buku (1-10) -> [1, 10]
-          // Kadang range-nya ga bawa nomor buku kalau parent-nya udah jelas buku
-          else if (suttaNum != null && nums.length == 2) {
-            // Cek apakah currentParent adalah Buku yang benar (misal sn12)
-            if (currentParent.contains(bookNum.toString())) {
+          // 🔥 CASE 4: Single Book - Exact match (Kp 1, Thag 16)
+          else if (nums.length == 1 && suttaNum == null) {
+            if (nums.first == bookNum &&
+                childUid.contains(bookNum.toString())) {
+              isMatch = true;
+            }
+          }
+          // 🔥 CASE 5: Sutta Range TANPA BookNum prefix (Ud level 2)
+          // Contoh: child_range = "1-10" untuk Ud 3.1-10
+          else if (nums.length == 2 && suttaNum != null) {
+            // Cek apakah UID mengandung pattern yang tepat
+            if (childUid.contains('$collection$bookNum')) {
               int start = nums[0];
               int end = nums[1];
+              if (suttaNum >= start && suttaNum <= end) isMatch = true;
+            }
+          }
+          // 🔥 CASE 6: Deep Nesting untuk SN/AN (SN 12.1-10)
+          else if (suttaNum != null &&
+              nums.length >= 3 &&
+              (collection == 'sn' || collection == 'an')) {
+            if (nums[0] == bookNum) {
+              int start = nums[nums.length - 2];
+              int end = nums.last;
               if (suttaNum >= start && suttaNum <= end) isMatch = true;
             }
           }
 
           if (isMatch) {
             nextParent = child["uid"];
-            // print("   ✅ Match found: $nextParent (Range: $rangeStr)");
+            print("   ✅ Match: $nextParent (Range: $rangeStr)");
             break;
           }
         }
 
         if (nextParent != null) {
+          if (currentParent != collection) {
+            lastValidParent = currentParent;
+          }
           currentParent = nextParent;
         } else {
-          // Kalau gak ada anak yang lebih dalam, STOP. Kita udah di ujung.
-          // print("🛑 No deeper match found. Stop at $currentParent");
+          if (currentParent != collection) {
+            lastValidParent = currentParent;
+          }
           break;
         }
       }
 
       print("🏁 Final Resolved Vagga: $currentParent");
-      // Safety: Jangan balikin collection root ('sn') sebagai parent vagga
-      if (currentParent == collection) return null;
 
-      return currentParent;
+      // Return logic dengan fallback
+      if (currentParent != collection) {
+        return currentParent;
+      } else if (lastValidParent != null) {
+        print("⚠️ Using last valid parent: $lastValidParent");
+        return lastValidParent;
+      }
+
+      // 🔥 FALLBACK BARU untuk Dhp & Kp
+      return collection; // ✅ Return "dhp" atau "kp" sebagai parent
     } catch (e) {
       debugPrint("Error resolving vagga: $e");
       return null;
+    }
+  }
+
+  /// Helper: Track & resolve vagga untuk navigation
+  Future<void> _processVaggaTracking(
+    Map<String, dynamic> mergedData,
+    String targetUid,
+  ) async {
+    // 🔥 SIMPAN VAGGA SEBELUM UPDATE!
+    final vaggaBeforeNavigate = _parentVaggaId;
+
+    // Update Anchor (ini bakal ubah _parentVaggaId!)
+    _updateParentAnchorOnMove(
+      mergedData["root_text"] as Map<String, dynamic>?,
+      mergedData["suttaplex"] as Map<String, dynamic>?,
+    );
+
+    // 🔥 PRESERVE/TRACK INITIAL VAGGA
+    if (widget.textData?["initial_vagga_uid"] != null) {
+      // Kalo udah ada initial_vagga → KEEP!
+      mergedData["initial_vagga_uid"] = widget.textData!["initial_vagga_uid"];
+      debugPrint(
+        "🎯 PRESERVING Initial Vagga: ${widget.textData!["initial_vagga_uid"]}",
+      );
+    } else {
+      // Kalo belum ada (first navigate) → SET dari vagga SEBELUM navigate
+      mergedData["initial_vagga_uid"] = vaggaBeforeNavigate;
+      debugPrint("🎯 TRACKING Initial Vagga: $vaggaBeforeNavigate");
+    }
+
+    // 🔥 RESOLVE VAGGA BARU
+    final rootMeta = mergedData["root_text"];
+    if (rootMeta is Map &&
+        rootMeta["vagga_uid"] != null &&
+        rootMeta["vagga_uid"].toString().trim().isNotEmpty) {
+      final vaggaUid = rootMeta["vagga_uid"].toString();
+      debugPrint("🔄 Vagga from API: $vaggaUid");
+      if (mounted) setState(() => _parentVaggaId = vaggaUid);
+      mergedData["resolved_vagga_uid"] = vaggaUid;
+    } else {
+      final resolvedVagga = await _resolveVaggaUid(targetUid);
+      if (resolvedVagga != null) {
+        debugPrint("🔄 Vagga Resolved: $vaggaBeforeNavigate → $resolvedVagga");
+        if (mounted) setState(() => _parentVaggaId = resolvedVagga);
+        mergedData["resolved_vagga_uid"] = resolvedVagga;
+      }
     }
   }
 
@@ -988,7 +1032,6 @@ class _SuttaDetailState extends State<SuttaDetail> {
 
     setState(() {
       _isLoading = true;
-      //_hasNavigated = true;
     });
 
     try {
@@ -1007,26 +1050,8 @@ class _SuttaDetailState extends State<SuttaDetail> {
         "suttaplex": widget.textData?["suttaplex"],
       };
 
-      // Update Anchor
-      _updateParentAnchorOnMove(
-        mergedData["root_text"] as Map<String, dynamic>?,
-        mergedData["suttaplex"] as Map<String, dynamic>?,
-      );
-
-      // 6. Resolve Vagga (Fitur Penting Lu)
-      final rootMeta = mergedData["root_text"];
-      if (rootMeta is Map &&
-          rootMeta["vagga_uid"] != null &&
-          rootMeta["vagga_uid"].toString().trim().isNotEmpty) {
-        setState(() => _parentVaggaId = rootMeta["vagga_uid"].toString());
-      } else {
-        final resolvedVagga = await _resolveVaggaUid(targetUid);
-        if (resolvedVagga != null) {
-          setState(() => _parentVaggaId = resolvedVagga);
-          mergedData["resolved_vagga_uid"] =
-              resolvedVagga; // Disimpan biar persist
-        }
-      }
+      // ✅ REFACTORED: Semua logic vagga di satu tempat
+      await _processVaggaTracking(mergedData, targetUid);
 
       if (!mounted) return;
 
@@ -1043,7 +1068,6 @@ class _SuttaDetailState extends State<SuttaDetail> {
             originalSuttaUid: null,
           ),
           transitionsBuilder: (_, animation, __, child) {
-            // Kalau Prev: Slide dari Kiri (-1), Kalau Next: Slide dari Kanan (1)
             final offsetBegin = isPrevious
                 ? const Offset(-1, 0)
                 : const Offset(1, 0);
@@ -1328,7 +1352,7 @@ class _SuttaDetailState extends State<SuttaDetail> {
 
     // 2. Ambil Content
     var pali = paliSegs[key] ?? "";
-    if (pali.trim().isEmpty) pali = "... pe ...";
+    if (pali.trim().isEmpty) pali = "... [dst] ...";
 
     var trans = translationSegs[key] ?? "";
     final isTransEmpty = trans.trim().isEmpty;
@@ -1389,7 +1413,7 @@ class _SuttaDetailState extends State<SuttaDetail> {
                 children: [
                   TextSpan(
                     children: _highlightText(
-                      isTransEmpty ? "... [pe] ..." : trans,
+                      isTransEmpty ? "... [dst] ..." : trans,
                       isTransEmpty
                           ? config.transStyle.copyWith(
                               color: Colors.grey,
@@ -1427,7 +1451,7 @@ class _SuttaDetailState extends State<SuttaDetail> {
   ) {
     // Logic style khusus utk "... pe ..." (Pali ellipsis)
     final isPe =
-        pali == "... pe ..." && !config.isH1 && !config.isH2 && !config.isH3;
+        pali == "... [dst] ..." && !config.isH1 && !config.isH2 && !config.isH3;
     final finalPaliStyle = config.paliStyle.copyWith(
       fontStyle: isPe ? FontStyle.italic : FontStyle.normal,
       color: isPe ? Colors.grey : config.paliStyle.color,
@@ -1452,31 +1476,33 @@ class _SuttaDetailState extends State<SuttaDetail> {
                 ),
                 const SizedBox(height: 4),
                 // Baris Trans
-                Text.rich(
-                  TextSpan(
-                    children: [
-                      TextSpan(
-                        children: _highlightText(
-                          isTransEmpty ? "... [dst] ..." : trans,
-                          isTransEmpty
-                              ? config.transStyle.copyWith(
-                                  color: Colors.grey,
-                                  fontStyle: FontStyle.italic,
-                                )
-                              : config.transStyle,
-                          index,
-                          paliMatchCount, // Offset match count setelah Pali
+                // Baris Trans
+                if (!_isRootOnly)
+                  Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          children: _highlightText(
+                            isTransEmpty ? "... [dst] ..." : trans,
+                            isTransEmpty
+                                ? config.transStyle.copyWith(
+                                    color: Colors.grey,
+                                    fontStyle: FontStyle.italic,
+                                  )
+                                : config.transStyle,
+                            index,
+                            paliMatchCount,
+                          ),
                         ),
-                      ),
-                      if (comm.isNotEmpty)
-                        _buildCommentSpan(
-                          context,
-                          comm,
-                          config.transStyle.fontSize ?? _fontSize,
-                        ),
-                    ],
+                        if (comm.isNotEmpty)
+                          _buildCommentSpan(
+                            context,
+                            comm,
+                            config.transStyle.fontSize ?? _fontSize,
+                          ),
+                      ],
+                    ),
                   ),
-                ),
               ],
             ),
           ),
@@ -1496,7 +1522,7 @@ class _SuttaDetailState extends State<SuttaDetail> {
     int paliMatchCount,
   ) {
     final isPe =
-        pali == "... pe ..." && !config.isH1 && !config.isH2 && !config.isH3;
+        pali == "... [dst] ..." && !config.isH1 && !config.isH2 && !config.isH3;
     final finalPaliStyle = config.paliStyle.copyWith(
       fontStyle: isPe ? FontStyle.italic : FontStyle.normal,
       color: isPe ? Colors.grey : config.paliStyle.color,
@@ -1558,7 +1584,7 @@ class _SuttaDetailState extends State<SuttaDetail> {
                     children: [
                       TextSpan(
                         children: _highlightText(
-                          isTransEmpty ? "... [pe] ..." : trans,
+                          isTransEmpty ? "... [dst] ..." : trans,
                           isTransEmpty
                               ? config.transStyle.copyWith(
                                   color: Colors.grey,
@@ -1607,9 +1633,21 @@ class _SuttaDetailState extends State<SuttaDetail> {
       return PopScope(
         canPop: false,
         onPopInvokedWithResult: (didPop, result) async {
-          if (didPop) return;
+          if (didPop) {
+            // 🔥 Reset initialVagga pas back berhasil
+            if (widget.textData != null) {
+              widget.textData!.remove("initial_vagga_uid");
+            }
+            return;
+          }
           final allow = await _handleBackReplace();
-          if (allow) Navigator.pop(context, result);
+          if (allow) {
+            // 🔥 Reset sebelum pop
+            if (widget.textData != null) {
+              widget.textData!.remove("initial_vagga_uid");
+            }
+            Navigator.pop(context, result);
+          }
         },
         child: Scaffold(
           key: _scaffoldKey,
